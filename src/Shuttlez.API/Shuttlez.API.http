@@ -1,0 +1,39 @@
+﻿@Shuttlez.API_HostAddress = http://localhost:5139
+
+### Health
+GET {{Shuttlez.API_HostAddress}}/api/v1/health
+
+### Send OTP (login)
+POST {{Shuttlez.API_HostAddress}}/api/v1/auth/send-otp
+Content-Type: application/json
+
+{
+  "phone": "+201012345678",
+  "purpose": "login"
+}
+
+### Verify OTP (dev code: 1234)
+POST {{Shuttlez.API_HostAddress}}/api/v1/auth/verify-otp
+Content-Type: application/json
+
+{
+  "phone": "+201012345678",
+  "code": "1234",
+  "purpose": "login"
+}
+
+### Register
+POST {{Shuttlez.API_HostAddress}}/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "phone": "+201098765432",
+  "fullName": "أحمد محمد علي",
+  "email": "ahmed@example.com",
+  "gender": "ذكر",
+  "code": "1234"
+}
+
+### Get Profile (replace TOKEN)
+GET {{Shuttlez.API_HostAddress}}/api/v1/users/me
+Authorization: Bearer {{TOKEN}}

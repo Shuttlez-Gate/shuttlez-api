@@ -1,7 +1,9 @@
 ﻿using System.Net;
 using System.Text.Json;
 using FluentValidation;
+using Microsoft.AspNetCore.Cors.Infrastructure;
 using Shuttlez.Application.Common;
+using Shuttlez.Infrastructure.Configuration;
 
 namespace Shuttlez.API.Middleware;
 
@@ -30,6 +32,8 @@ public class ExceptionHandlingMiddleware
 
     private async Task HandleExceptionAsync(HttpContext context, Exception exception)
     {
+        await ApplyCorsHeadersAsync(context);
+
         var (statusCode, message, errors) = exception switch
         {
             AppException appEx => (appEx.StatusCode, appEx.Message, new[] { appEx.Message }),
@@ -58,5 +62,25 @@ public class ExceptionHandlingMiddleware
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         }));
+    }
+
+    private static async Task ApplyCorsHeadersAsync(HttpContext context)
+    {
+        var corsPolicyProvider = context.RequestServices.GetService<ICorsPolicyProvider>();
+        var corsService = context.RequestServices.GetService<ICorsService>();
+
+        if (corsPolicyProvider is null || corsService is null)
+        {
+            return;
+        }
+
+        var policy = await corsPolicyProvider.GetPolicyAsync(context, CorsSettings.PolicyName);
+        if (policy is null)
+        {
+            return;
+        }
+
+        var result = corsService.EvaluatePolicy(context, policy);
+        corsService.ApplyResult(result, context.Response);
     }
 }

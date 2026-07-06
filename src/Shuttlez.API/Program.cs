@@ -4,6 +4,7 @@ using Shuttlez.API.Hubs;
 using Shuttlez.API.Middleware;
 using Shuttlez.Application;
 using Shuttlez.Infrastructure;
+using Shuttlez.Infrastructure.Configuration;
 using Shuttlez.Infrastructure.Data;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -48,14 +49,30 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
+var corsSettings = builder.Configuration
+    .GetSection(CorsSettings.SectionName)
+    .Get<CorsSettings>() ?? new CorsSettings();
+
+var allowedOrigins = corsSettings.AllowedOrigins
+    .Where(origin => !string.IsNullOrWhiteSpace(origin))
+    .Distinct(StringComparer.OrdinalIgnoreCase)
+    .ToArray();
+
+if (allowedOrigins.Length == 0)
+{
+    throw new InvalidOperationException(
+        "Cors:AllowedOrigins must include at least one origin (e.g. https://shuttlez.org).");
+}
+
+builder.Services.Configure<CorsSettings>(builder.Configuration.GetSection(CorsSettings.SectionName));
 builder.Services.AddSignalR();
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("FlutterApp", policy =>
+    options.AddPolicy(CorsSettings.PolicyName, policy =>
     {
-        policy.AllowAnyHeader()
+        policy.WithOrigins(allowedOrigins)
+            .AllowAnyHeader()
             .AllowAnyMethod()
-            .SetIsOriginAllowed(_ => true)
             .AllowCredentials();
     });
 });
@@ -69,7 +86,6 @@ using (var scope = app.Services.CreateScope())
     await DbSeeder.SeedAsync(db);
 }
 
-app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseSerilogRequestLogging();
 
 if (app.Environment.IsDevelopment())
@@ -77,11 +93,16 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
-else
+
+app.UseRouting();
+app.UseCors(CorsSettings.PolicyName);
+
+if (!app.Environment.IsDevelopment())
 {
     app.UseHttpsRedirection();
 }
-app.UseCors("FlutterApp");
+
+app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
 

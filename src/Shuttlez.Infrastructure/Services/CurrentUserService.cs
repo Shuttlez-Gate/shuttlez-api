@@ -13,19 +13,28 @@ public class CurrentUserService : ICurrentUserService
         _httpContextAccessor = httpContextAccessor;
     }
 
+    private ClaimsPrincipal? User => _httpContextAccessor.HttpContext?.User;
+
     public Guid? UserId
     {
         get
         {
-            var id = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            var id = User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? User?.FindFirstValue("sub")
+                ?? User?.FindFirstValue("nameid");
             return Guid.TryParse(id, out var userId) ? userId : null;
         }
     }
 
     public string? Phone =>
-        _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.MobilePhone)
-        ?? _httpContextAccessor.HttpContext?.User?.FindFirstValue("phone_number");
+        User?.FindFirstValue(ClaimTypes.MobilePhone)
+        ?? User?.FindFirstValue("phone_number");
 
-    public bool IsAuthenticated =>
-        _httpContextAccessor.HttpContext?.User?.Identity?.IsAuthenticated == true;
+    public bool IsAuthenticated => User?.Identity?.IsAuthenticated == true;
+
+    public string? Role =>
+        User?.FindFirstValue(ClaimTypes.Role) ?? User?.FindFirstValue("role");
+
+    public bool IsAdmin =>
+        string.Equals(Role, "Admin", StringComparison.OrdinalIgnoreCase);
 }

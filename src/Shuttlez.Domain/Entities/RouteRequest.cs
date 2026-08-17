@@ -14,5 +14,8 @@ public class RouteRequest : BaseEntity
     public string Status { get; set; } = "pending";
     public string? Notes { get; set; }
 
+    /// <summary>carshuttle | minibus | bus — تفضيل العميل لنوع المركبة.</summary>
+    public string PreferredVehicleType { get; set; } = "minibus";
+
     public User User { get; set; } = null!;
 }

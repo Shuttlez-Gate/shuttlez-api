@@ -70,7 +70,8 @@ public class CreateCustomerTripHandler : IRequestHandler<CreateCustomerTripComma
                 "تم العثور على مسار متوافق");
         }
 
-        var directions = await _directions.GetDirectionsAsync(origin, destination, cancellationToken)
+        var directions = await _directions.GetDirectionsAsync(
+                origin, destination, cancellationToken: cancellationToken)
             ?? throw new AppException("تعذر حساب مسار الرحلة");
 
         var decoded = _routeMatching.DecodePolyline(directions.EncodedPolyline);

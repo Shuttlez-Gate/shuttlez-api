@@ -1,9 +1,11 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Shuttlez.Application.Common;
 
 namespace Shuttlez.API.Controllers;
 
 [ApiController]
+[AllowAnonymous]
 [Route("api/v1/health")]
 public class HealthController : ControllerBase
 {

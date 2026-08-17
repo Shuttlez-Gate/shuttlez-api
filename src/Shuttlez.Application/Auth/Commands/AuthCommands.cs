@@ -3,7 +3,7 @@ using Shuttlez.Application.Auth.DTOs;
 
 namespace Shuttlez.Application.Auth.Commands;
 
-public record SendOtpCommand(SendOtpRequest Request) : IRequest<string>;
+public record SendOtpCommand(SendOtpRequest Request) : IRequest<SendOtpResponseDto>;
 
 public record VerifyOtpCommand(VerifyOtpRequest Request, string? IpAddress) : IRequest<AuthResponseDto>;
 

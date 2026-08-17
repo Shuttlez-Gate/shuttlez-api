@@ -1,4 +1,4 @@
-﻿using System.Security.Cryptography;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -34,12 +34,13 @@ public class OtpService : IOtpService
         _logger = logger;
     }
 
-    public async Task SendOtpAsync(string phone, OtpPurpose purpose, CancellationToken cancellationToken = default)
+    public async Task<SendOtpResult> SendOtpAsync(
+        string phone,
+        OtpPurpose purpose,
+        CancellationToken cancellationToken = default)
     {
         var normalizedPhone = PhoneNormalizer.Normalize(phone);
-        var code = _env.IsDevelopment()
-            ? _settings.DevBypassCode
-            : GenerateCode(_settings.CodeLength);
+        var code = GenerateCode(_settings.CodeLength);
 
         var otp = new OtpRequest
         {
@@ -56,13 +57,17 @@ public class OtpService : IOtpService
 
         if (_env.IsDevelopment() && _settings.LogCodeInDevelopment)
         {
-            _logger.LogWarning("DEV OTP for {Phone}: {Code}", normalizedPhone, code);
+            _logger.LogWarning("OTP for {Phone}: {Code}", normalizedPhone, code);
         }
         else
         {
-            // TODO: integrate SMS provider (Unifonic / Twilio)
-            _logger.LogInformation("OTP sent to {Phone}", normalizedPhone);
+            // TODO: integrate SMS provider (Unifonic / Twilio) or FCM push
+            _logger.LogInformation("OTP generated for {Phone} (SMS/FCM not configured)", normalizedPhone);
         }
+
+        // حتى يتوفر SMS/FCM: الكود العشوائي يُسلَّم دائمًا للعميل لعرض إشعار محلي.
+        // التحقق يبقى على الـ hash في DB — لا يوجد bypass ثابت مثل 1234.
+        return new SendOtpResult("تم إرسال رمز التحقق", code);
     }
 
     public async Task<bool> VerifyOtpAsync(
@@ -72,11 +77,6 @@ public class OtpService : IOtpService
         CancellationToken cancellationToken = default)
     {
         var normalizedPhone = PhoneNormalizer.Normalize(phone);
-
-        if (_env.IsDevelopment() && code == _settings.DevBypassCode)
-        {
-            return true;
-        }
 
         var otp = await _db.OtpRequests
             .Where(o => o.Phone == normalizedPhone && o.Purpose == purpose && !o.IsUsed)

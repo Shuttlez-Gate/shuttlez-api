@@ -28,16 +28,23 @@ public sealed class GoogleDirectionsService : IGoogleDirectionsService
     public async Task<DirectionsResult?> GetDirectionsAsync(
         GeoCoordinate origin,
         GeoCoordinate destination,
+        IReadOnlyList<GeoCoordinate>? waypoints = null,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(_settings.ApiKey))
         {
             _logger.LogWarning("Google Maps API key is missing. Using straight-line fallback polyline.");
-            return BuildFallbackDirections(origin, destination);
+            return BuildFallbackDirections(origin, destination, waypoints);
         }
 
         var url =
             $"{_settings.DirectionsBaseUrl}?origin={FormatCoord(origin)}&destination={FormatCoord(destination)}&key={Uri.EscapeDataString(_settings.ApiKey)}";
+
+        if (waypoints is { Count: > 0 })
+        {
+            var joined = string.Join("|", waypoints.Select(FormatCoord));
+            url += $"&waypoints={Uri.EscapeDataString(joined)}";
+        }
 
         try
         {
@@ -46,37 +53,50 @@ public sealed class GoogleDirectionsService : IGoogleDirectionsService
                 cancellationToken);
 
             var route = response?.Routes?.FirstOrDefault();
-            var leg = route?.Legs?.FirstOrDefault();
+            var legs = route?.Legs;
             var polyline = route?.OverviewPolyline?.Points;
 
-            if (string.IsNullOrWhiteSpace(polyline) || leg is null)
+            if (string.IsNullOrWhiteSpace(polyline) || legs is null || legs.Count == 0)
             {
                 _logger.LogWarning("Google Directions returned no route. Using fallback polyline.");
-                return BuildFallbackDirections(origin, destination);
+                return BuildFallbackDirections(origin, destination, waypoints);
             }
 
             return new DirectionsResult(
                 polyline,
-                leg.Distance?.Value ?? 0,
-                leg.Duration?.Value ?? 0);
+                legs.Sum(l => l.Distance?.Value ?? 0),
+                legs.Sum(l => l.Duration?.Value ?? 0));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to call Google Directions API. Using fallback polyline.");
-            return BuildFallbackDirections(origin, destination);
+            return BuildFallbackDirections(origin, destination, waypoints);
         }
     }
 
     private static DirectionsResult BuildFallbackDirections(
         GeoCoordinate origin,
-        GeoCoordinate destination)
+        GeoCoordinate destination,
+        IReadOnlyList<GeoCoordinate>? waypoints)
     {
-        var encoded = PolylineEncoder.Encode([origin, destination]);
-        var distance = (int)Math.Round(
-            HaversineMeters(origin, destination),
-            MidpointRounding.AwayFromZero);
+        var points = new List<GeoCoordinate> { origin };
+        if (waypoints is { Count: > 0 })
+        {
+            points.AddRange(waypoints);
+        }
+        points.Add(destination);
 
-        return new DirectionsResult(encoded, distance, 0);
+        var encoded = PolylineEncoder.Encode(points);
+        var distance = 0d;
+        for (var i = 1; i < points.Count; i++)
+        {
+            distance += HaversineMeters(points[i - 1], points[i]);
+        }
+
+        return new DirectionsResult(
+            encoded,
+            (int)Math.Round(distance, MidpointRounding.AwayFromZero),
+            0);
     }
 
     private static string FormatCoord(GeoCoordinate coordinate) =>

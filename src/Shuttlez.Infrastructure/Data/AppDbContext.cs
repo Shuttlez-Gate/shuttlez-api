@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Shuttlez.Application.Common.Interfaces;
 using Shuttlez.Domain.Entities;
 
@@ -19,6 +19,7 @@ public class AppDbContext : DbContext, IAppDbContext
     public DbSet<FaqItem> FaqItemsSet => Set<FaqItem>();
     public DbSet<LegalDocument> LegalDocumentsSet => Set<LegalDocument>();
     public DbSet<Driver> DriversSet => Set<Driver>();
+    public DbSet<DriverDocument> DriverDocumentsSet => Set<DriverDocument>();
     public DbSet<Vehicle> VehiclesSet => Set<Vehicle>();
     public DbSet<Stop> StopsSet => Set<Stop>();
     public DbSet<Invoice> InvoicesSet => Set<Invoice>();
@@ -32,6 +33,7 @@ public class AppDbContext : DbContext, IAppDbContext
     public DbSet<LandingRouteLead> LandingRouteLeadsSet => Set<LandingRouteLead>();
     public DbSet<LandingWaitlistEntry> LandingWaitlistEntriesSet => Set<LandingWaitlistEntry>();
     public DbSet<LandingCaptainLead> LandingCaptainLeadsSet => Set<LandingCaptainLead>();
+    public DbSet<RouteDemandGroupState> RouteDemandGroupStatesSet => Set<RouteDemandGroupState>();
 
     public IQueryable<User> Users => UsersSet.AsQueryable();
     public IQueryable<OtpRequest> OtpRequests => OtpRequestsSet.AsQueryable();
@@ -51,6 +53,14 @@ public class AppDbContext : DbContext, IAppDbContext
     public IQueryable<LandingRouteLead> LandingRouteLeads => LandingRouteLeadsSet.AsQueryable();
     public IQueryable<LandingWaitlistEntry> LandingWaitlistEntries => LandingWaitlistEntriesSet.AsQueryable();
     public IQueryable<LandingCaptainLead> LandingCaptainLeads => LandingCaptainLeadsSet.AsQueryable();
+    public IQueryable<RouteDemandGroupState> RouteDemandGroupStates => RouteDemandGroupStatesSet.AsQueryable();
+    public IQueryable<Driver> Drivers => DriversSet.AsQueryable();
+    public IQueryable<DriverDocument> DriverDocuments => DriverDocumentsSet.AsQueryable();
+    public IQueryable<Vehicle> Vehicles => VehiclesSet.AsQueryable();
+    public IQueryable<Invoice> Invoices => InvoicesSet.AsQueryable();
+    public IQueryable<Wallet> Wallets => WalletsSet.AsQueryable();
+    public IQueryable<WalletTransaction> WalletTransactions => WalletTransactionsSet.AsQueryable();
+    public IQueryable<Review> Reviews => ReviewsSet.AsQueryable();
 
     public new void Add<T>(T entity) where T : class => Set<T>().Add(entity);
     public new void Update<T>(T entity) where T : class => Set<T>().Update(entity);
@@ -87,5 +97,24 @@ public class AppDbContext : DbContext, IAppDbContext
             .HasOne(u => u.Driver)
             .WithOne(d => d.User)
             .HasForeignKey<Driver>(d => d.UserId);
+
+        modelBuilder.Entity<DriverDocument>()
+            .HasOne(d => d.Driver)
+            .WithMany(d => d.Documents)
+            .HasForeignKey(d => d.DriverId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<DriverDocument>()
+            .HasIndex(d => d.DriverId);
+
+        modelBuilder.Entity<RouteDemandGroupState>()
+            .HasIndex(s => s.RouteKey)
+            .IsUnique();
+
+        modelBuilder.Entity<RouteDemandGroupState>()
+            .HasOne(s => s.AssignedDriver)
+            .WithMany()
+            .HasForeignKey(s => s.AssignedDriverId)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 }

@@ -2,9 +2,13 @@ using MediatR;
 
 using Microsoft.EntityFrameworkCore;
 
+using Microsoft.Extensions.Options;
+
 using Shuttlez.Application.Common;
 
 using Shuttlez.Application.Common.Interfaces;
+
+using Shuttlez.Application.Landing;
 
 using Shuttlez.Application.Landing.DTOs;
 
@@ -58,9 +62,17 @@ public class LandingQueryHandlers :
 
     private readonly IAppDbContext _db;
 
+    private readonly CaptainLaunchOfferSettings _offer;
 
 
-    public LandingQueryHandlers(IAppDbContext db) => _db = db;
+
+    public LandingQueryHandlers(
+        IAppDbContext db,
+        IOptions<CaptainLaunchOfferSettings> offer)
+    {
+        _db = db;
+        _offer = offer.Value;
+    }
 
 
 
@@ -228,6 +240,18 @@ public class LandingQueryHandlers :
 
 
 
+        var waitlistCounts = await _db.LandingWaitlistEntries
+
+            .Where(w => w.RouteId != null && routeIds.Contains(w.RouteId.Value))
+
+            .GroupBy(w => w.RouteId!.Value)
+
+            .Select(g => new { RouteId = g.Key, Count = g.Count() })
+
+            .ToDictionaryAsync(x => x.RouteId, x => x.Count, cancellationToken);
+
+
+
         var items = new List<LandingRouteDto>();
 
         for (var i = 0; i < routes.Count; i++)
@@ -243,6 +267,8 @@ public class LandingQueryHandlers :
             stopCounts.TryGetValue(route.Id, out var stopsCount);
 
             plateByRoute.TryGetValue(route.Id, out var plate);
+
+            waitlistCounts.TryGetValue(route.Id, out var waitlistCount);
 
 
 
@@ -264,7 +290,9 @@ public class LandingQueryHandlers :
 
                 LandingLabelLocalizer.Localize(nearestStreet, request.Language),
 
-                LocalizeMeetingPoint(request.Language)));
+                LocalizeMeetingPoint(request.Language),
+
+                waitlistCount));
 
         }
 
@@ -344,13 +372,23 @@ public class LandingQueryHandlers :
 
 
 
-    public Task<LandingPageConfigDto> Handle(
+    public async Task<LandingPageConfigDto> Handle(
 
         GetLandingPageConfigQuery request,
 
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken)
 
-        Task.FromResult(new LandingPageConfigDto(
+    {
+
+        var waitlistCount = await _db.LandingWaitlistEntries
+
+            .CountAsync(cancellationToken);
+
+        var captainOffer = await BuildCaptainOfferAsync(cancellationToken);
+
+
+
+        return new LandingPageConfigDto(
 
             [
 
@@ -366,7 +404,13 @@ public class LandingQueryHandlers :
 
             "تم استلام طلب التسجيل ككابتن. سنتواصل معك قريباً",
 
-            "تم تسجيل طلبك بنجاح. سنتواصل معك قريباً."));
+            "تم تسجيل طلبك بنجاح. سنتواصل معك قريباً",
+
+            waitlistCount,
+
+            captainOffer);
+
+    }
 
 
 
@@ -441,6 +485,63 @@ public class LandingQueryHandlers :
     private static string LocalizeMeetingPoint(string? language) =>
 
         EgyptRouteLocations.IsEnglish(language) ? MeetingPointEn : MeetingPointAr;
+
+    private async Task<CaptainLaunchOfferDto> BuildCaptainOfferAsync(
+        CancellationToken cancellationToken)
+    {
+        var totalSlots = Math.Max(1, _offer.TotalSlots);
+        var profitPercent = Math.Clamp(_offer.ProfitPercent, 0, 100);
+        var firstTrips = Math.Max(1, _offer.FirstTrips);
+        var durationMonths = Math.Max(1, _offer.DurationMonths);
+
+        var driverPhones = await _db.Drivers
+            .Where(d => !d.IsDeleted)
+            .Select(d => d.User.Phone)
+            .ToListAsync(cancellationToken);
+
+        var leadPhones = await _db.LandingCaptainLeads
+            .Where(l => !l.IsDeleted)
+            .Select(l => l.Phone)
+            .ToListAsync(cancellationToken);
+
+        var registeredCount = driverPhones
+            .Concat(leadPhones)
+            .Select(NormalizePhone)
+            .Where(phone => phone.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .Count();
+
+        var remainingSlots = Math.Max(0, totalSlots - registeredCount);
+
+        return new CaptainLaunchOfferDto(
+            totalSlots,
+            registeredCount,
+            remainingSlots,
+            profitPercent,
+            firstTrips,
+            durationMonths);
+    }
+
+    private static string NormalizePhone(string? phone)
+    {
+        if (string.IsNullOrWhiteSpace(phone))
+        {
+            return string.Empty;
+        }
+
+        var digits = new string(phone.Where(char.IsDigit).ToArray());
+        if (digits.StartsWith("20") && digits.Length > 10)
+        {
+            digits = digits[2..];
+        }
+
+        if (digits.StartsWith('0') && digits.Length >= 11)
+        {
+            digits = digits[1..];
+        }
+
+        return digits;
+    }
 
 }
 

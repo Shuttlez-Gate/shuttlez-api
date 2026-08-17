@@ -78,16 +78,44 @@ public class LandingCommandHandlers :
     {
         ValidatePhone(request.Request.Phone);
         var phone = NormalizePhone(request.Request.Phone);
+        var form = request.Request;
 
-        var exists = await _db.LandingWaitlistEntries
-            .AnyAsync(x => x.Phone == phone, cancellationToken);
-        if (exists)
-            throw new AppException("رقمك مسجل بالفعل في قائمة الانتظار");
+        Route? route = null;
+        if (form.RouteId is Guid routeId)
+        {
+            route = await _db.Routes
+                .FirstOrDefaultAsync(
+                    r => r.Id == routeId && r.IsActive && !r.IsDeleted,
+                    cancellationToken)
+                ?? throw new AppException("المسار غير موجود");
+
+            var existsForRoute = await _db.LandingWaitlistEntries
+                .AnyAsync(
+                    x => x.Phone == phone && x.RouteId == routeId,
+                    cancellationToken);
+            if (existsForRoute)
+                throw new AppException("رقمك مسجل بالفعل في قائمة انتظار هذا المسار");
+        }
+        else
+        {
+            var exists = await _db.LandingWaitlistEntries
+                .AnyAsync(x => x.Phone == phone && x.RouteId == null, cancellationToken);
+            if (exists)
+                throw new AppException("رقمك مسجل بالفعل في قائمة الانتظار");
+        }
+
+        var (routeFrom, routeTo) = route is null
+            ? (form.RouteFrom?.Trim(), form.RouteTo?.Trim())
+            : LandingLabelLocalizer.LocalizeRouteName(route.Name, null);
 
         var entity = new LandingWaitlistEntry
         {
             Phone = phone,
-            FullName = request.Request.FullName?.Trim(),
+            FullName = form.FullName?.Trim(),
+            RouteId = form.RouteId,
+            RouteFrom = form.RouteFrom?.Trim() ?? routeFrom,
+            RouteTo = form.RouteTo?.Trim() ?? routeTo,
+            Source = form.RouteId is null ? "landing" : "routes-page",
         };
 
         _db.Add(entity);
@@ -95,7 +123,9 @@ public class LandingCommandHandlers :
 
         return new LandingSubmitResponse(
             entity.Id,
-            "تم انضمامك لقائمة الانتظار بنجاح");
+            form.RouteId is null
+                ? "تم انضمامك لقائمة الانتظار بنجاح"
+                : "تم تسجيلك في قائمة انتظار المسار بنجاح");
     }
 
     public async Task<LandingSubmitResponse> Handle(
@@ -104,15 +134,25 @@ public class LandingCommandHandlers :
     {
         ValidatePhone(request.Request.Phone);
 
+        var phone = PhoneNormalizer.Normalize(request.Request.Phone);
         var entity = new LandingCaptainLead
         {
-            Phone = NormalizePhone(request.Request.Phone),
+            Phone = phone,
             FullName = request.Request.FullName?.Trim(),
             VehicleType = request.Request.VehicleType?.Trim(),
             Notes = request.Request.Notes?.Trim(),
         };
 
         _db.Add(entity);
+
+        // يظهر في شاشة الكباتن مباشرة (طلب بانتظار التفعيل التشغيلي).
+        await DriverProvisioning.EnsureDriverAsync(
+            _db,
+            phone,
+            entity.FullName,
+            isActive: true,
+            cancellationToken: cancellationToken);
+
         await _db.SaveChangesAsync(cancellationToken);
 
         return new LandingSubmitResponse(
@@ -123,8 +163,8 @@ public class LandingCommandHandlers :
     private static void ValidatePhone(string phone)
     {
         var digits = new string(phone.Where(char.IsDigit).ToArray());
-        if (digits.Length < 10)
-            throw new AppException("يرجى إدخال رقم موبايل صحيح");
+        if (digits.Length < 11)
+            throw new AppException("يرجى إدخال رقم موبايل صحيح (11 رقم على الأقل)");
     }
 
     private static string NormalizePhone(string phone) =>

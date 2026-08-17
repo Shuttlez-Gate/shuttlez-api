@@ -16,6 +16,7 @@ public class RouteRequestsController : ControllerBase
     public RouteRequestsController(IMediator mediator) => _mediator = mediator;
 
     [HttpGet("options")]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<RouteRequestOptionsDto>>> GetOptions(
         CancellationToken cancellationToken)
     {
@@ -24,8 +25,8 @@ public class RouteRequestsController : ControllerBase
         return Ok(ApiResponse<RouteRequestOptionsDto>.Ok(options));
     }
 
-    [Authorize]
     [HttpPost]
+    [Authorize]
     public async Task<ActionResult<ApiResponse<CreateRouteRequestResponse>>> Create(
         [FromBody] CreateRouteRequestDto request,
         CancellationToken cancellationToken)

@@ -1,9 +1,9 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 
 namespace Shuttlez.API.Hubs;
 
-[Authorize]
+[AllowAnonymous]
 public class TripTrackingHub : Hub
 {
     public async Task JoinTrip(string tripId)
@@ -31,19 +31,26 @@ public class TripTrackingHub : Hub
 [Authorize]
 public class SupportChatHub : Hub
 {
+    public static string GroupName(Guid ticketId) => $"ticket-{ticketId}";
+    public static string GroupName(string ticketId) => $"ticket-{ticketId}";
+
     public async Task JoinTicket(string ticketId)
     {
-        await Groups.AddToGroupAsync(Context.ConnectionId, $"ticket-{ticketId}");
+        if (string.IsNullOrWhiteSpace(ticketId))
+        {
+            throw new HubException("معرّف التذكرة مطلوب");
+        }
+
+        await Groups.AddToGroupAsync(Context.ConnectionId, GroupName(ticketId.Trim()));
     }
 
-    public async Task SendMessage(string ticketId, string content)
+    public async Task LeaveTicket(string ticketId)
     {
-        await Clients.Group($"ticket-{ticketId}").SendAsync("MessageReceived", new
+        if (string.IsNullOrWhiteSpace(ticketId))
         {
-            ticketId,
-            content,
-            senderId = Context.UserIdentifier,
-            sentAt = DateTime.UtcNow
-        });
+            return;
+        }
+
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, GroupName(ticketId.Trim()));
     }
 }

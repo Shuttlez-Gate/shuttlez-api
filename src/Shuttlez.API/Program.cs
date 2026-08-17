@@ -1,8 +1,12 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc.Authorization;
+using Microsoft.EntityFrameworkCore;
 using Serilog;
 using Shuttlez.API.Hubs;
 using Shuttlez.API.Middleware;
+using Shuttlez.API.Services;
 using Shuttlez.Application;
+using Shuttlez.Application.Common.Interfaces;
 using Shuttlez.Infrastructure;
 using Shuttlez.Infrastructure.Configuration;
 using Shuttlez.Infrastructure.Data;
@@ -15,7 +19,10 @@ builder.Host.UseSerilog((context, configuration) =>
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
-builder.Services.AddControllers();
+builder.Services.AddControllers(options =>
+{
+    options.Filters.Add(new AllowAnonymousFilter());
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -65,7 +72,11 @@ if (allowedOrigins.Length == 0)
 }
 
 builder.Services.Configure<CorsSettings>(builder.Configuration.GetSection(CorsSettings.SectionName));
+builder.Services.Configure<Shuttlez.Application.Landing.CaptainLaunchOfferSettings>(
+    builder.Configuration.GetSection(Shuttlez.Application.Landing.CaptainLaunchOfferSettings.SectionName));
 builder.Services.AddSignalR();
+builder.Services.AddSingleton<IDriverRealtimeNotifier, DriverRealtimeNotifier>();
+builder.Services.AddSingleton<ISupportChatRealtimeNotifier, SupportChatRealtimeNotifier>();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy(CorsSettings.PolicyName, policy =>
@@ -82,8 +93,28 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await db.Database.MigrateAsync();
-    await DbSeeder.SeedAsync(db);
+    var startupLogger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+    try
+    {
+        await db.Database.MigrateAsync();
+        await DbSeeder.SeedAsync(db);
+    }
+    catch (Exception ex)
+    {
+        startupLogger.LogError(ex, "Database migrate/seed failed on startup — API will still start.");
+        try
+        {
+            var logDir = Path.Combine(app.Environment.ContentRootPath, "logs");
+            Directory.CreateDirectory(logDir);
+            await File.WriteAllTextAsync(
+                Path.Combine(logDir, "startup-error.txt"),
+                $"{DateTime.UtcNow:O}{Environment.NewLine}{ex}{Environment.NewLine}");
+        }
+        catch
+        {
+            // Best-effort file log for shared hosting when stdout is unavailable.
+        }
+    }
 }
 
 app.UseSerilogRequestLogging();
@@ -97,18 +128,39 @@ if (app.Environment.IsDevelopment())
 app.UseRouting();
 app.UseCors(CorsSettings.PolicyName);
 
+var webRoot = app.Environment.WebRootPath;
+if (string.IsNullOrWhiteSpace(webRoot))
+{
+    webRoot = Path.Combine(app.Environment.ContentRootPath, "wwwroot");
+    Directory.CreateDirectory(webRoot);
+}
+
+Directory.CreateDirectory(Path.Combine(webRoot, "uploads"));
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(webRoot),
+    RequestPath = ""
+});
+
 if (!app.Environment.IsDevelopment())
 {
+    app.UseForwardedHeaders(new ForwardedHeadersOptions
+    {
+        ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
+            | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto,
+    });
     app.UseHttpsRedirection();
 }
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<DriverTripsRateLimitMiddleware>();
 
 app.MapControllers();
 app.MapHub<TripTrackingHub>("/hubs/trip-tracking");
 app.MapHub<SupportChatHub>("/hubs/support-chat");
+app.MapHub<DriverHub>("/hubs/driver");
 
 app.Run();
 

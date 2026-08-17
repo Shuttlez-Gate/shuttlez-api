@@ -1,4 +1,5 @@
-﻿using MediatR;
+using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Shuttlez.Application.Common;
 using Shuttlez.Application.Content.DTOs;
@@ -7,6 +8,7 @@ using Shuttlez.Application.Content.Queries;
 namespace Shuttlez.API.Controllers;
 
 [ApiController]
+[AllowAnonymous]
 [Route("api/v1/content")]
 public class ContentController : ControllerBase
 {

@@ -1,4 +1,4 @@
-﻿using MediatR;
+using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Shuttlez.Application.Bookings.DTOs;
@@ -8,7 +8,7 @@ using Shuttlez.Application.Common;
 namespace Shuttlez.API.Controllers;
 
 [ApiController]
-[Authorize]
+[AllowAnonymous]
 [Route("api/v1/bookings")]
 public class BookingsController : ControllerBase
 {

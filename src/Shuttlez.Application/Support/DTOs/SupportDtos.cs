@@ -1,4 +1,4 @@
-﻿using Shuttlez.Application.Trips.DTOs;
+using Shuttlez.Application.Trips.DTOs;
 
 namespace Shuttlez.Application.Support.DTOs;
 
@@ -6,6 +6,8 @@ public record SupportTicketDto(
     Guid Id,
     string Tab,
     string ReportStatus,
+    string Subject,
+    string? LastMessage,
     TripListItemDto? Trip,
     string SeatsLabel,
     string PaymentLabel);

@@ -10,7 +10,8 @@ public record LandingRouteDto(
     string LineCode,
     string BadgeTone,
     string NearestStreet,
-    string MeetingPoint);
+    string MeetingPoint,
+    int WaitlistCount);
 
 public record LandingMapPointDto(string Label, double Lat, double Lng, string Time);
 
@@ -29,11 +30,21 @@ public record LandingVehicleOptionDto(
     string LabelAr,
     string LabelEn);
 
+public record CaptainLaunchOfferDto(
+    int TotalSlots,
+    int RegisteredCount,
+    int RemainingSlots,
+    int ProfitPercent,
+    int FirstTrips,
+    int DurationMonths);
+
 public record LandingPageConfigDto(
     IReadOnlyList<LandingVehicleOptionDto> VehicleOptions,
     string WaitlistSuccessMessage,
     string CaptainSuccessMessage,
-    string RouteRequestSuccessMessage);
+    string RouteRequestSuccessMessage,
+    int WaitlistCount,
+    CaptainLaunchOfferDto CaptainOffer);
 
 public record LandingRouteLeadDto(
     string Phone,
@@ -47,7 +58,12 @@ public record LandingRouteLeadDto(
     string? UsageDays,
     string? UsageReason);
 
-public record LandingWaitlistDto(string Phone, string? FullName);
+public record LandingWaitlistDto(
+    string Phone,
+    string? FullName,
+    Guid? RouteId = null,
+    string? RouteFrom = null,
+    string? RouteTo = null);
 
 public record LandingCaptainLeadDto(
     string Phone,

@@ -36,6 +36,10 @@ public static class DependencyInjection
         services.AddSingleton<IDateTimeProvider, DateTimeProvider>();
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
+        services.AddScoped<IFileStorageService, LocalFileStorageService>();
+        services.AddSingleton<IDriverRealtimeNotifier, NullDriverRealtimeNotifier>();
+        services.AddSingleton<ISupportChatRealtimeNotifier, NullSupportChatRealtimeNotifier>();
+        services.AddMemoryCache();
 
         var jwt = configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
             ?? throw new InvalidOperationException("Jwt settings are missing");
@@ -67,11 +71,20 @@ public static class DependencyInjection
                         }
 
                         return Task.CompletedTask;
-                    }
+                    },
+                    OnAuthenticationFailed = context =>
+                    {
+                        // Invalid/expired tokens must not block public endpoints.
+                        context.NoResult();
+                        return Task.CompletedTask;
+                    },
                 };
             });
 
-        services.AddAuthorization();
+        services.AddAuthorization(options =>
+        {
+            options.FallbackPolicy = null;
+        });
 
         return services;
     }

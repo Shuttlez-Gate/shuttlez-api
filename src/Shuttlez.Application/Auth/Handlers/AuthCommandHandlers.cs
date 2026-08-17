@@ -1,4 +1,4 @@
-﻿using MediatR;
+using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Shuttlez.Application.Auth.Commands;
 using Shuttlez.Application.Auth.DTOs;
@@ -9,7 +9,42 @@ using Shuttlez.Domain.Enums;
 
 namespace Shuttlez.Application.Auth.Handlers;
 
-public class SendOtpCommandHandler : IRequestHandler<SendOtpCommand, string>
+internal static class CaptainLoginGuard
+{
+    public static bool IsDriverClient(string? client) =>
+        string.Equals(client, "driver", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(client, "captain", StringComparison.OrdinalIgnoreCase);
+
+    public static async Task EnsureCanLoginAsync(
+        IAppDbContext db,
+        User user,
+        string? client,
+        CancellationToken ct)
+    {
+        if (!IsDriverClient(client))
+        {
+            return;
+        }
+
+        if (user.UserType != UserType.Driver || !user.IsActive)
+        {
+            throw new AppException(
+                "هذا الحساب غير مصرح له بدخول تطبيق الكابتن. الدخول للكباتن المعتمدين فقط");
+        }
+
+        var hasActiveDriver = await db.Drivers.AnyAsync(
+            d => d.UserId == user.Id && !d.IsDeleted && d.IsActive,
+            ct);
+
+        if (!hasActiveDriver)
+        {
+            throw new AppException(
+                "حساب الكابتن غير مكتمل أو غير مفعّل. تواصل مع الإدارة");
+        }
+    }
+}
+
+public class SendOtpCommandHandler : IRequestHandler<SendOtpCommand, SendOtpResponseDto>
 {
     private readonly IOtpService _otpService;
     private readonly IAppDbContext _db;
@@ -20,20 +55,27 @@ public class SendOtpCommandHandler : IRequestHandler<SendOtpCommand, string>
         _db = db;
     }
 
-    public async Task<string> Handle(SendOtpCommand request, CancellationToken cancellationToken)
+    public async Task<SendOtpResponseDto> Handle(SendOtpCommand request, CancellationToken cancellationToken)
     {
         var purpose = AuthMapper.ParsePurpose(request.Request.Purpose);
         var phone = PhoneNormalizer.Normalize(request.Request.Phone);
 
         if (purpose == OtpPurpose.Login)
         {
-            var exists = await _db.Users
-                .AnyAsync(u => u.Phone == phone && !u.IsDeleted, cancellationToken);
+            var user = await _db.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Phone == phone && !u.IsDeleted, cancellationToken);
 
-            if (!exists)
+            if (user is null)
             {
                 throw new AppException("رقم الهاتف غير مسجل. أنشئ حساباً أولاً");
             }
+
+            await CaptainLoginGuard.EnsureCanLoginAsync(
+                _db,
+                user,
+                request.Request.Client,
+                cancellationToken);
         }
 
         if (purpose == OtpPurpose.Register)
@@ -47,8 +89,8 @@ public class SendOtpCommandHandler : IRequestHandler<SendOtpCommand, string>
             }
         }
 
-        await _otpService.SendOtpAsync(phone, purpose, cancellationToken);
-        return "تم إرسال رمز التحقق";
+        var result = await _otpService.SendOtpAsync(phone, purpose, cancellationToken);
+        return new SendOtpResponseDto(result.Message, result.DebugCode);
     }
 }
 
@@ -93,6 +135,15 @@ public class VerifyOtpCommandHandler : IRequestHandler<VerifyOtpCommand, AuthRes
         if (user is null)
         {
             throw new AppException("رقم الهاتف غير مسجل. أنشئ حساباً أولاً");
+        }
+
+        if (purpose == OtpPurpose.Login)
+        {
+            await CaptainLoginGuard.EnsureCanLoginAsync(
+                _db,
+                user,
+                request.Request.Client,
+                cancellationToken);
         }
 
         var tokens = await IssueTokensAsync(user, request.IpAddress, cancellationToken);
@@ -163,17 +214,59 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, AuthRespo
             throw new AppException("رقم الهاتف مسجل بالفعل");
         }
 
+        var asDriver = DriverProvisioning.IsDriverRegistration(
+            request.Request.UserType,
+            request.Request.DeviceId,
+            request.Request.Client);
+
         var user = new User
         {
             Phone = phone,
             FullName = request.Request.FullName,
             Email = request.Request.Email,
             Gender = AuthMapper.ParseGender(request.Request.Gender),
-            UserType = UserType.Passenger
+            UserType = asDriver ? UserType.Driver : UserType.Passenger
         };
 
         _db.Add(user);
         _db.Add(new Wallet { UserId = user.Id, Balance = 0 });
+
+        if (asDriver)
+        {
+            var req = request.Request;
+            DateOnly? birth = null;
+            DateOnly? licenseExpiry = null;
+            if (!string.IsNullOrWhiteSpace(req.BirthDate)
+                && DateOnly.TryParse(req.BirthDate.Trim(), out var bd))
+            {
+                birth = bd;
+            }
+
+            if (!string.IsNullOrWhiteSpace(req.LicenseExpiry)
+                && DateOnly.TryParse(req.LicenseExpiry.Trim(), out var le))
+            {
+                licenseExpiry = le;
+            }
+
+            _db.Add(new Driver
+            {
+                UserId = user.Id,
+                IsActive = false,
+                VerificationStatus = DriverVerificationStatus.Pending,
+                NationalId = string.IsNullOrWhiteSpace(req.NationalId) ? null : req.NationalId.Trim(),
+                BirthDate = birth,
+                LicenseNumber = string.IsNullOrWhiteSpace(req.LicenseNumber) ? null : req.LicenseNumber.Trim(),
+                LicenseType = string.IsNullOrWhiteSpace(req.LicenseType) ? null : req.LicenseType.Trim(),
+                LicenseExpiry = licenseExpiry,
+                VehicleKind = string.IsNullOrWhiteSpace(req.VehicleKind) ? null : req.VehicleKind.Trim(),
+                VehicleModelName = string.IsNullOrWhiteSpace(req.VehicleModel) ? null : req.VehicleModel.Trim(),
+                ManufactureYear = req.ManufactureYear,
+                PlateNumber = string.IsNullOrWhiteSpace(req.PlateNumber) ? null : req.PlateNumber.Trim(),
+                VehicleColor = string.IsNullOrWhiteSpace(req.VehicleColor) ? null : req.VehicleColor.Trim(),
+                Seats = req.Seats
+            });
+        }
+
         await _db.SaveChangesAsync(cancellationToken);
 
         var accessToken = _jwt.GenerateAccessToken(user);

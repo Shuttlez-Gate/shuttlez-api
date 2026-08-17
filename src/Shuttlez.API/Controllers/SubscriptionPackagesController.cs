@@ -1,4 +1,4 @@
-﻿using MediatR;
+using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Shuttlez.Application.Common;
@@ -8,6 +8,7 @@ using Shuttlez.Application.Subscriptions.Queries;
 namespace Shuttlez.API.Controllers;
 
 [ApiController]
+[AllowAnonymous]
 [Route("api/v1/subscription-packages")]
 public class SubscriptionPackagesController : ControllerBase
 {
@@ -23,7 +24,6 @@ public class SubscriptionPackagesController : ControllerBase
         return Ok(ApiResponse<IReadOnlyList<SubscriptionPackageDto>>.Ok(packages));
     }
 
-    [Authorize]
     [HttpPost("{id:guid}/subscribe")]
     public async Task<ActionResult<ApiResponse<SubscribePackageResponse>>> Subscribe(
         Guid id,

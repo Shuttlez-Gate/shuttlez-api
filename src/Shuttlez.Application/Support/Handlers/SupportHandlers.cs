@@ -1,4 +1,4 @@
-﻿using MediatR;
+using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Shuttlez.Application.Common;
 using Shuttlez.Application.Common.Interfaces;
@@ -28,15 +28,18 @@ public class SupportHandlers :
     private readonly IAppDbContext _db;
     private readonly ICurrentUserService _currentUser;
     private readonly IDateTimeProvider _clock;
+    private readonly ISupportChatRealtimeNotifier _realtime;
 
     public SupportHandlers(
         IAppDbContext db,
         ICurrentUserService currentUser,
-        IDateTimeProvider clock)
+        IDateTimeProvider clock,
+        ISupportChatRealtimeNotifier realtime)
     {
         _db = db;
         _currentUser = currentUser;
         _clock = clock;
+        _realtime = realtime;
     }
 
     public async Task<IReadOnlyList<SupportTicketDto>> Handle(
@@ -70,11 +73,27 @@ public class SupportHandlers :
                 .Where(b => b.UserId == userId && tripIds.Contains(b.TripId))
                 .ToDictionaryAsync(b => b.TripId, cancellationToken);
 
+        var ticketIds = tickets.Select(t => t.Id).ToList();
+        var lastMessages = ticketIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _db.SupportMessages
+                .Where(m => ticketIds.Contains(m.TicketId) && !m.IsDeleted)
+                .GroupBy(m => m.TicketId)
+                .Select(g => new
+                {
+                    TicketId = g.Key,
+                    Content = g.OrderByDescending(m => m.CreatedAt)
+                        .Select(m => m.Content)
+                        .FirstOrDefault()
+                })
+                .ToDictionaryAsync(x => x.TicketId, x => x.Content ?? string.Empty, cancellationToken);
+
         return tickets
             .Select(ticket =>
             {
                 bookings.TryGetValue(ticket.TripId ?? Guid.Empty, out var booking);
-                return MapTicket(ticket, booking, isCompletedTab);
+                lastMessages.TryGetValue(ticket.Id, out var lastMessage);
+                return MapTicket(ticket, booking, isCompletedTab, lastMessage);
             })
             .ToList();
     }
@@ -115,6 +134,9 @@ public class SupportHandlers :
 
         if (request.Request.TripId.HasValue)
         {
+            var tripId = request.Request.TripId.Value;
+
+            // راكب: التذكرة مربوطة بحجزه على الرحلة.
             booking = await _db.Bookings
                 .Include(b => b.Trip)
                     .ThenInclude(t => t.Route)
@@ -122,11 +144,27 @@ public class SupportHandlers :
                     .ThenInclude(t => t.Driver!)
                         .ThenInclude(d => d.Vehicle)
                 .FirstOrDefaultAsync(
-                    b => b.UserId == userId && b.TripId == request.Request.TripId.Value,
+                    b => b.UserId == userId && b.TripId == tripId && !b.IsDeleted,
                     cancellationToken);
 
-            trip = booking?.Trip
-                ?? throw new NotFoundException("الرحلة غير موجودة");
+            trip = booking?.Trip;
+
+            // كابتن: التذكرة مربوطة برحلة يُشغّلها.
+            if (trip is null)
+            {
+                trip = await _db.Trips
+                    .Include(t => t.Route)
+                    .Include(t => t.Driver!)
+                        .ThenInclude(d => d.Vehicle)
+                    .FirstOrDefaultAsync(
+                        t => t.Id == tripId
+                            && !t.IsDeleted
+                            && t.Driver != null
+                            && t.Driver.UserId == userId
+                            && !t.Driver.IsDeleted,
+                        cancellationToken)
+                    ?? throw new NotFoundException("الرحلة غير موجودة أو غير مرتبطة بحسابك");
+            }
         }
 
         var subject = string.IsNullOrWhiteSpace(request.Request.Subject)
@@ -163,6 +201,11 @@ public class SupportHandlers :
             Content = "مرحباً بك، فريق الدعم الفني جاهز لمساعدتك.",
         });
 
+        await NotifyAdminsAsync(
+            title: "تذكرة دعم جديدة",
+            body: $"{subject} — من {await ResolveUserLabelAsync(userId, cancellationToken)}",
+            cancellationToken);
+
         await _db.SaveChangesAsync(cancellationToken);
 
         return new CreateSupportTicketResponse(ticket.Id, "تم إنشاء البلاغ بنجاح");
@@ -192,7 +235,22 @@ public class SupportHandlers :
         };
 
         _db.Add(message);
+        ticket.UpdatedAt = _clock.UtcNow;
+
+        await NotifyAdminsAsync(
+            title: "رسالة دعم جديدة",
+            body: message.Content.Length > 120 ? message.Content[..120] + "…" : message.Content,
+            cancellationToken);
+
         await _db.SaveChangesAsync(cancellationToken);
+
+        await _realtime.NotifyMessageAsync(
+            ticket.Id,
+            message.Id,
+            isFromSupport: false,
+            message.Content,
+            message.CreatedAt == default ? _clock.UtcNow : message.CreatedAt,
+            cancellationToken);
 
         return new SendSupportMessageResponse(message.Id, "تم إرسال الرسالة");
     }
@@ -200,7 +258,8 @@ public class SupportHandlers :
     private SupportTicketDto MapTicket(
         SupportTicket ticket,
         Booking? booking,
-        bool isCompletedTab)
+        bool isCompletedTab,
+        string? lastMessage)
     {
         TripListItemDto? tripDto = null;
         var seatsLabel = "1 مقعد";
@@ -214,14 +273,81 @@ public class SupportHandlers :
                 : $"{booking.SeatCount} مقعد";
             paymentLabel = $"{booking.TotalAmount:0} ج.م - نقداً";
         }
+        else if (ticket.Trip != null)
+        {
+            // تذكرة كابتن أو بلاغ بدون حجز راكب — نعرض بيانات الرحلة فقط.
+            tripDto = MapTripListItemWithoutBooking(ticket.Trip);
+            paymentLabel = "—";
+        }
 
         return new SupportTicketDto(
             ticket.Id,
             isCompletedTab ? "completed" : "current",
             isCompletedTab ? "completed" : "active",
+            ticket.Subject,
+            string.IsNullOrWhiteSpace(lastMessage) ? null : lastMessage,
             tripDto,
             seatsLabel,
             paymentLabel);
+    }
+
+    private async Task NotifyAdminsAsync(string title, string body, CancellationToken ct)
+    {
+        var adminIds = await _db.Users
+            .Where(u => !u.IsDeleted && u.IsActive && u.UserType == UserType.Admin)
+            .Select(u => u.Id)
+            .ToListAsync(ct);
+
+        foreach (var adminId in adminIds)
+        {
+            _db.Add(new Notification
+            {
+                UserId = adminId,
+                Title = title,
+                Body = body,
+                Type = "support",
+            });
+        }
+    }
+
+    private async Task<string> ResolveUserLabelAsync(Guid userId, CancellationToken ct)
+    {
+        var user = await _db.Users
+            .AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => new { u.FullName, u.Phone })
+            .FirstOrDefaultAsync(ct);
+
+        if (user is null) return userId.ToString();
+        if (!string.IsNullOrWhiteSpace(user.FullName)) return user.FullName!;
+        return user.Phone;
+    }
+
+    private TripListItemDto MapTripListItemWithoutBooking(Trip trip)
+    {
+        var now = _clock.UtcNow;
+        var status = ResolveStatus(trip, now);
+        var vehicle = trip.Driver?.Vehicle;
+
+        return new TripListItemDto(
+            trip.Id,
+            trip.ReferenceCode ?? $"#TR{trip.ScheduledAt:yy}-{trip.ScheduledAt:yyyy}",
+            $"{ArDayName(trip.ScheduledAt.DayOfWeek)} {trip.ScheduledAt:dd/MM/yyyy} - {trip.ScheduledAt:HH:mm}",
+            trip.ScheduledAt.Date,
+            VehicleLabel(vehicle?.Type ?? VehicleType.MiniBus),
+            trip.Route.Name.Split(" - ").FirstOrDefault() ?? trip.Route.Name,
+            trip.Route.Name.Contains(" - ")
+                ? trip.Route.Name.Split(" - ").Last()
+                : trip.Route.Description ?? trip.Route.Name,
+            status,
+            VehicleAssetKey(vehicle?.Type ?? VehicleType.MiniBus),
+            trip.Route.StartLatitude,
+            trip.Route.StartLongitude,
+            trip.Route.EndLatitude,
+            trip.Route.EndLongitude,
+            null,
+            null,
+            null);
     }
 
     private TripListItemDto MapTripListItem(Trip trip, Booking booking)

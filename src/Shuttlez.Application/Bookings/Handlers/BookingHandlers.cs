@@ -121,10 +121,30 @@ public class BookingHandlers :
                 .ToList());
         }
 
-        if (!dateChips.Any(c => c.IsSelected) && dateChips.Count > 0)
+        // لو النهاردة مفيش عروض (مثلاً التوليد يبدأ من بكرة) اختار أول يوم فيه رحلات.
+        var preferredIndex = -1;
+        for (var i = 0; i < offersPerDay.Count; i++)
+        {
+            if (offersPerDay[i].Count > 0)
+            {
+                preferredIndex = i;
+                break;
+            }
+        }
+
+        if (preferredIndex < 0)
+        {
+            preferredIndex = dateChips.FindIndex(c => c.IsSelected);
+            if (preferredIndex < 0 && dateChips.Count > 0)
+            {
+                preferredIndex = 0;
+            }
+        }
+
+        if (preferredIndex >= 0 && dateChips.Count > 0)
         {
             dateChips = dateChips
-                .Select((c, idx) => c with { IsSelected = idx == 0 })
+                .Select((c, idx) => c with { IsSelected = idx == preferredIndex })
                 .ToList();
         }
 

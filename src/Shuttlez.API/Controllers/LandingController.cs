@@ -1,4 +1,5 @@
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Shuttlez.Application.Common;
 using Shuttlez.Application.Landing.DTOs;
@@ -9,6 +10,7 @@ using Shuttlez.Application.RouteRequests.DTOs;
 namespace Shuttlez.API.Controllers;
 
 [ApiController]
+[AllowAnonymous]
 [Route("api/v1/landing")]
 public class LandingController : ControllerBase
 {

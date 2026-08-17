@@ -8,7 +8,7 @@ using Shuttlez.Application.CustomerTrips.DTOs;
 namespace Shuttlez.API.Controllers;
 
 [ApiController]
-[Authorize]
+[AllowAnonymous]
 [Route("api/v1/customer-trips")]
 public class CustomerTripsController : ControllerBase
 {

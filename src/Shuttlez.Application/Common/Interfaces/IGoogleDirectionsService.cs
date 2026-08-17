@@ -7,6 +7,7 @@ public interface IGoogleDirectionsService
     Task<DirectionsResult?> GetDirectionsAsync(
         GeoCoordinate origin,
         GeoCoordinate destination,
+        IReadOnlyList<GeoCoordinate>? waypoints = null,
         CancellationToken cancellationToken = default);
 }
 

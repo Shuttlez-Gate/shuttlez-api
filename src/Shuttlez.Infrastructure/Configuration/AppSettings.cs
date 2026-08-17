@@ -1,4 +1,4 @@
-﻿namespace Shuttlez.Infrastructure.Configuration;
+namespace Shuttlez.Infrastructure.Configuration;
 
 public class JwtSettings
 {
@@ -16,6 +16,11 @@ public class OtpSettings
     public int CodeLength { get; set; } = 4;
     public int ExpiryMinutes { get; set; } = 5;
     public int MaxAttempts { get; set; } = 5;
-    public string DevBypassCode { get; set; } = "1234";
     public bool LogCodeInDevelopment { get; set; } = true;
+
+    /// <summary>
+    /// يُرجع الكود العشوائي في رد send-otp ليُعرض كإشعار محلي على الجهاز
+    /// حتى يتم ربط SMS/FCM الحقيقي. لا يعيد تفعيل bypass ثابت مثل 1234.
+    /// </summary>
+    public bool DeliverCodeForClientPush { get; set; } = true;
 }

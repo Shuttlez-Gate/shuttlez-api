@@ -47,6 +47,17 @@ public class RouteRequestHandlers :
             throw new AppException("يرجى إكمال بيانات المسار");
         }
 
+        var vehicleType = NormalizeVehicleType(form.PreferredVehicleType);
+
+        if (!EgyptAreaCoordinates.HasValidCoordinates(
+                form.FromLatitude ?? 0, form.FromLongitude ?? 0) ||
+            !EgyptAreaCoordinates.HasValidCoordinates(
+                form.ToLatitude ?? 0, form.ToLongitude ?? 0))
+        {
+            throw new AppException(
+                "حدّد نقطة الانطلاق والوصول بدقة على الخريطة");
+        }
+
         var notes = JsonSerializer.Serialize(new
         {
             form.FromTime,
@@ -54,6 +65,7 @@ public class RouteRequestHandlers :
             form.WeeklyCount,
             form.UsageDays,
             form.UsageReason,
+            PreferredVehicleType = vehicleType,
         });
 
         var entity = new RouteRequest
@@ -61,6 +73,11 @@ public class RouteRequestHandlers :
             UserId = userId,
             FromAddress = $"{form.FromRegion}, {form.FromCity}",
             ToAddress = $"{form.ToRegion}, {form.ToCity}",
+            FromLatitude = form.FromLatitude!.Value,
+            FromLongitude = form.FromLongitude!.Value,
+            ToLatitude = form.ToLatitude!.Value,
+            ToLongitude = form.ToLongitude!.Value,
+            PreferredVehicleType = vehicleType,
             Status = "pending",
             Notes = notes,
         };
@@ -81,4 +98,12 @@ public class RouteRequestHandlers :
             entity.Id,
             "تم إرسال طلب المسار بنجاح");
     }
+
+    private static string NormalizeVehicleType(string? value) =>
+        value?.Trim().ToLowerInvariant() switch
+        {
+            "car" or "carshuttle" or "car_shuttle" => "carshuttle",
+            "bus" => "bus",
+            _ => "minibus",
+        };
 }

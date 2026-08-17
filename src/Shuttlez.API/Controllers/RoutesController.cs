@@ -1,4 +1,5 @@
-﻿using MediatR;
+using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Shuttlez.Application.Common;
 using Shuttlez.Application.Routes.DTOs;
@@ -7,6 +8,7 @@ using Shuttlez.Application.Routes.Queries;
 namespace Shuttlez.API.Controllers;
 
 [ApiController]
+[AllowAnonymous]
 [Route("api/v1/routes")]
 public class RoutesController : ControllerBase
 {

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Shuttlez.Application.Common;
 using Shuttlez.Domain.Entities;
 using Shuttlez.Domain.Enums;
 
@@ -6,11 +7,63 @@ namespace Shuttlez.Infrastructure.Data;
 
 public static class DbSeeder
 {
+    /// <summary>
+    /// يضمن وجود حساب مسؤول لكل رقم في <c>Admin:BootstrapPhones</c>؛ يرقّي الحساب
+    /// الموجود بدلاً من تكرار الرقم. الدخول للوحة التحكم يتم برمز OTP.
+    /// </summary>
+    public static async Task SeedAdminsAsync(AppDbContext db, IEnumerable<string> phones)
+    {
+        var normalized = phones
+            .Select(PhoneNormalizer.Normalize)
+            .Where(phone => !string.IsNullOrWhiteSpace(phone))
+            .Distinct()
+            .ToList();
+
+        if (normalized.Count == 0) return;
+
+        var existing = await db.UsersSet
+            .Where(u => normalized.Contains(u.Phone))
+            .ToListAsync();
+
+        var changed = false;
+
+        foreach (var user in existing)
+        {
+            if (user.UserType == UserType.Admin && user.IsActive && !user.IsDeleted) continue;
+
+            user.UserType = UserType.Admin;
+            user.IsActive = true;
+            user.IsDeleted = false;
+            user.UpdatedAt = DateTime.UtcNow;
+            changed = true;
+        }
+
+        foreach (var phone in normalized.Except(existing.Select(u => u.Phone)))
+        {
+            var admin = new User
+            {
+                Phone = phone,
+                FullName = "مسؤول النظام",
+                UserType = UserType.Admin,
+                IsActive = true
+            };
+            db.UsersSet.Add(admin);
+            db.WalletsSet.Add(new Wallet { UserId = admin.Id, Balance = 0 });
+            changed = true;
+        }
+
+        if (changed)
+        {
+            await db.SaveChangesAsync();
+        }
+    }
+
     public static async Task SeedAsync(AppDbContext db)
     {
         await SeedFaqAsync(db);
         await SeedLegalDocumentsAsync(db);
         await SeedSubscriptionPackagesAsync(db);
+        await SyncCaptainLeadsToDriversAsync(db);
 
         if (!await db.Routes.AnyAsync())
         {
@@ -152,8 +205,81 @@ public static class DbSeeder
         await NormalizeMiniBusCapacitiesAsync(db);
         await SeedLandingCatalogRoutesAsync(db);
         await db.SaveChangesAsync();
+        await SeedDriverReviewsAsync(db);
         await SeedSampleNotificationsAsync(db);
         await SeedSupportTicketsAsync(db);
+    }
+
+    private static async Task SeedDriverReviewsAsync(AppDbContext db)
+    {
+        if (await db.ReviewsSet.AnyAsync())
+            return;
+
+        var driver = await db.DriversSet
+            .Include(d => d.User)
+            .FirstOrDefaultAsync(d => d.User.Phone == "01099999999" && !d.IsDeleted);
+
+        if (driver is null)
+            return;
+
+        var passenger = await db.UsersSet
+            .FirstOrDefaultAsync(u => u.UserType == UserType.Passenger && u.IsActive && !u.IsDeleted);
+
+        if (passenger is null)
+        {
+            passenger = new User
+            {
+                Phone = "01011111111",
+                FullName = "أحمد محمد",
+                UserType = UserType.Passenger,
+                IsActive = true,
+            };
+            db.UsersSet.Add(passenger);
+            db.WalletsSet.Add(new Wallet { UserId = passenger.Id, Balance = 0 });
+            await db.SaveChangesAsync();
+        }
+
+        var trips = await db.TripsSet
+            .Where(t => t.DriverId == driver.Id && !t.IsDeleted)
+            .OrderBy(t => t.ScheduledAt)
+            .Take(8)
+            .ToListAsync();
+
+        if (trips.Count == 0)
+            return;
+
+        var stars = new[] { 5, 4, 5, 4, 5, 3, 5, 4 };
+        var comments = new[]
+        {
+            "التزام بالمواعيد و تعامل راقي جدًا",
+            "رحلة أمنة و مكيفة، الكابتن ذوق و معاملة محترمة",
+            "تجربة ممتازة، أنصح بالتعامل معاه",
+            "رحلة مريحة ووصلنا في المعاد",
+            "كابتن محترم وقيادة آمنة",
+            "تجربة جيدة بشكل عام",
+            "خدمة ممتازة ونظافة عالية",
+            "تعامل راقي ورحلة هادئة",
+        };
+
+        for (var i = 0; i < trips.Count; i++)
+        {
+            trips[i].Status = TripStatus.Completed;
+
+            db.ReviewsSet.Add(new Review
+            {
+                TripId = trips[i].Id,
+                UserId = passenger.Id,
+                DriverId = driver.Id,
+                Stars = stars[i % stars.Length],
+                Comment = comments[i % comments.Length],
+                CreatedAt = trips[i].ScheduledAt.AddHours(2),
+            });
+        }
+
+        driver.RatingAverage = 4.5m;
+        driver.RatingCount = trips.Count;
+
+        await db.SaveChangesAsync();
     }
 
     /// <summary>يضيف مسارات العرض في صفحة الهبوط إن لم تكن موجودة.</summary>
@@ -431,5 +557,38 @@ public static class DbSeeder
                 Answer = item.Answer,
                 Order = item.Order
             }));
+    }
+
+    /// <summary>
+    /// يحوّل طلبات الكباتن من الويب إلى حسابات Drivers لتظهر في لوحة التحكم.
+    /// </summary>
+    private static async Task SyncCaptainLeadsToDriversAsync(AppDbContext db)
+    {
+        var leads = await db.LandingCaptainLeadsSet
+            .Where(l => !l.IsDeleted)
+            .OrderBy(l => l.CreatedAt)
+            .ToListAsync();
+
+        if (leads.Count == 0) return;
+
+        foreach (var lead in leads)
+        {
+            if (string.IsNullOrWhiteSpace(lead.Phone)) continue;
+
+            var normalized = PhoneNormalizer.Normalize(lead.Phone);
+            if (lead.Phone != normalized)
+            {
+                lead.Phone = normalized;
+                lead.UpdatedAt = DateTime.UtcNow;
+            }
+
+            await DriverProvisioning.EnsureDriverAsync(
+                db,
+                normalized,
+                lead.FullName,
+                isActive: true);
+
+            await db.SaveChangesAsync();
+        }
     }
 }

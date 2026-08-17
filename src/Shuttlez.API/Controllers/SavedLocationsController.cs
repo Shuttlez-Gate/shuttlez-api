@@ -1,4 +1,4 @@
-﻿using MediatR;
+using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Shuttlez.Application.Common;
@@ -8,7 +8,7 @@ using Shuttlez.Application.Locations.Queries;
 namespace Shuttlez.API.Controllers;
 
 [ApiController]
-[Authorize]
+[AllowAnonymous]
 [Route("api/v1/users/me/saved-locations")]
 public class SavedLocationsController : ControllerBase
 {

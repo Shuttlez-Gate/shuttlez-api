@@ -1,12 +1,16 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Shuttlez.Application.Bookings;
 using Shuttlez.Application.Bookings.DTOs;
 using Shuttlez.Application.Bookings.Queries;
 using Shuttlez.Application.Common;
 using Shuttlez.Application.Common.Interfaces;
+using Shuttlez.Application.Notifications;
 using Shuttlez.Application.RouteMatching;
 using Shuttlez.Application.RouteMatching.Models;
+using Shuttlez.Application.Subscriptions;
+using Shuttlez.Application.Trips;
 using Shuttlez.Domain.Entities;
 using Shuttlez.Domain.Enums;
 
@@ -14,13 +18,16 @@ namespace Shuttlez.Application.Bookings.Handlers;
 
 public class BookingHandlers :
     IRequestHandler<GetBookingPreviewQuery, BookingPreviewDto>,
-    IRequestHandler<CreateBookingCommand, CreateBookingResponse>
+    IRequestHandler<CreateBookingCommand, CreateBookingResponse>,
+    IRequestHandler<CancelTripBookingCommand, bool>
 {
     private readonly IAppDbContext _db;
     private readonly ICurrentUserService _currentUser;
     private readonly IDateTimeProvider _clock;
     private readonly IRouteMatchingService _routeMatching;
     private readonly RouteMatchingOptions _matchingOptions;
+    private readonly IShuttleCommissionResolver _commissionResolver;
+    private readonly TripPushNotifier _push;
 
     private static readonly string[] BadgeVariants = ["green", "cyan", "coral"];
 
@@ -29,13 +36,17 @@ public class BookingHandlers :
         ICurrentUserService currentUser,
         IDateTimeProvider clock,
         IRouteMatchingService routeMatching,
-        IOptions<RouteMatchingOptions> matchingOptions)
+        IOptions<RouteMatchingOptions> matchingOptions,
+        IShuttleCommissionResolver commissionResolver,
+        TripPushNotifier push)
     {
         _db = db;
         _currentUser = currentUser;
         _clock = clock;
         _routeMatching = routeMatching;
         _matchingOptions = matchingOptions.Value;
+        _commissionResolver = commissionResolver;
+        _push = push;
     }
 
     public async Task<BookingPreviewDto> Handle(
@@ -160,79 +171,314 @@ public class BookingHandlers :
         CancellationToken cancellationToken)
     {
         var userId = RequireUserId();
-        var seatCount = request.Request.SeatCount <= 0 ? 1 : request.Request.SeatCount;
+        var seatCount = request.Request.SeatCount;
 
-        var trip = await _db.Trips
+        if (seatCount <= 0)
+        {
+            throw new AppException(
+                "عدد المقاعد غير صالح",
+                400,
+                ErrorCodes.InvalidSeatCount);
+        }
+
+        var paymentMethod = CashPaymentPolicy.NormalizeOrThrow(request.Request.PaymentMethod);
+
+        var response = await _db.ExecuteInSerializableTransactionAsync(async ct =>
+        {
+            // Serialize per-user booking mutations (subscription credits + seats).
+            await _db.AcquireTransactionAdvisoryLockAsync(
+                BookingUserLockKey(userId),
+                ct);
+
+            var trip = await _db.Trips
+            .Include(t => t.Driver!)
+                .ThenInclude(d => d.Vehicle)
             .FirstOrDefaultAsync(
                 t => t.Id == request.Request.TripId &&
-                     (t.Status == TripStatus.Scheduled || t.Status == TripStatus.DriverAssigned),
-                cancellationToken)
-            ?? throw new NotFoundException("الرحلة غير متاحة للحجز");
+                     !t.IsDeleted &&
+                     TripBookability.IsBookableStatus(t.Status),
+                ct)
+            ?? throw new NotFoundException("الرحلة غير متاحة للحجز", ErrorCodes.TripNotBookable);
 
-        if (trip.ScheduledAt <= _clock.UtcNow)
-            throw new AppException("انتهى وقت الرحلة");
+            if (trip.PricePerSeat < 0)
+            {
+                throw new AppException(
+                    "سعر الرحلة غير متاح",
+                    400,
+                    ErrorCodes.PricingNotAvailable);
+            }
 
-        if (trip.AvailableSeats < seatCount)
-            throw new AppException("لا توجد مقاعد كافية");
+            if (trip.ScheduledAt <= _clock.UtcNow)
+                throw new AppException("انتهى وقت الرحلة", 400, ErrorCodes.TripNotBookable);
 
-        var existing = await _db.Bookings
-            .AnyAsync(
-                b => b.TripId == trip.Id &&
-                     b.UserId == userId &&
-                     b.Status != BookingStatus.Cancelled &&
-                     b.Status != BookingStatus.Expired,
+            var existing = await _db.Bookings
+                .AnyAsync(
+                    b => b.TripId == trip.Id &&
+                         b.UserId == userId &&
+                         b.Status != BookingStatus.Cancelled &&
+                         b.Status != BookingStatus.Expired &&
+                         !b.IsDeleted,
+                    ct);
+
+            if (existing)
+            {
+                throw new AppException(
+                    "لديك حجز على هذه الرحلة بالفعل",
+                    400,
+                    ErrorCodes.DuplicateBooking);
+            }
+
+            var user = await _db.Users
+                .FirstOrDefaultAsync(u => u.Id == userId && !u.IsDeleted, ct)
+                ?? throw new UnauthorizedAppException("غير مصرح");
+
+            var usesCredit = await ResolveSubscriptionCreditOrThrowAsync(
+                user,
+                seatCount,
+                paymentMethod,
+                ct);
+
+            var reserved = await _db.TryDecrementTripSeatsAsync(
+                trip.Id,
+                seatCount,
+                ct);
+
+            if (reserved == 0)
+            {
+                throw new AppException(
+                    "المقعد لم يعد متاحًا، برجاء اختيار رحلة أخرى.",
+                    409,
+                    ErrorCodes.SeatUnavailable);
+            }
+
+            try
+            {
+                await _db.MarkTripFullIfNeededAsync(trip.Id, ct);
+
+                var pricePerSeat = trip.PricePerSeat;
+                var total = ShuttleFinancialCalculator.CalculateTotal(pricePerSeat, seatCount);
+                var vehicleType = trip.Driver?.Vehicle?.Type;
+                var platformPercent = await _commissionResolver.GetPlatformCommissionPercentAsync(
+                    trip.RouteId,
+                    vehicleType,
+                    _clock.UtcNow,
+                    ct);
+                var (rate, commission, captain) =
+                    ShuttleFinancialCalculator.SplitEarnings(total, platformPercent);
+
+                var reference = $"BK-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
+
+                var booking = new Booking
+                {
+                    TripId = trip.Id,
+                    UserId = userId,
+                    Status = BookingStatus.Confirmed,
+                    SeatCount = seatCount,
+                    TotalAmount = total,
+                    PricePerSeat = pricePerSeat,
+                    CommissionRate = rate,
+                    CommissionAmount = commission,
+                    CaptainEarnings = captain,
+                    UsesSubscriptionCredit = usesCredit,
+                    PaymentMethod = paymentMethod,
+                    ReferenceCode = reference
+                };
+
+                _db.Add(booking);
+                _db.Add(new Invoice
+                {
+                    BookingId = booking.Id,
+                    Amount = total,
+                    Status = PaymentStatus.Pending
+                });
+
+                var tripRef = trip.ReferenceCode ?? reference;
+                var inboxBody = CashPaymentPolicy.IsCash(paymentMethod)
+                    ? "تم تأكيد الحجز — الدفع نقدًا للكابتن"
+                    : "لقد قمت بحجز رحلة جديدة بنجاح.";
+                _db.Add(new Notification
+                {
+                    UserId = userId,
+                    Title = $"رحلة جديدة برقم {tripRef}",
+                    Body = inboxBody,
+                    Type = "booking",
+                    IsRead = false
+                });
+
+                await _db.SaveChangesAsync(ct);
+
+                return new CreateBookingResponse(
+                    booking.Id,
+                    trip.Id,
+                    reference,
+                    total,
+                    booking.Status.ToString(),
+                    "تم حجز الرحلة بنجاح",
+                    pricePerSeat,
+                    seatCount,
+                    paymentMethod);
+            }
+            catch
+            {
+                await _db.TryIncrementTripSeatsAsync(trip.Id, seatCount, ct);
+                throw;
+            }
+        }, cancellationToken);
+
+        await _push.NotifyBookingConfirmedAsync(
+            userId,
+            response.BookingId,
+            response.TripId,
+            response.SeatCount,
+            response.TotalAmount,
+            response.PaymentMethod,
+            cancellationToken);
+
+        return response;
+    }
+
+    private static long BookingUserLockKey(Guid userId)
+    {
+        var bytes = userId.ToByteArray();
+        return BitConverter.ToInt64(bytes, 0) ^ BitConverter.ToInt64(bytes, 8);
+    }
+
+    /// Throws SUBSCRIPTION_EXPIRED / SUBSCRIPTION_LIMIT_REACHED; never silent cash fallback.
+    private async Task<bool> ResolveSubscriptionCreditOrThrowAsync(
+        User user,
+        int seatCount,
+        string paymentMethod,
+        CancellationToken cancellationToken)
+    {
+        var hasPackage = user.ActiveSubscriptionPackageId is not null &&
+                         user.SubscriptionExpiresAt is not null;
+
+        if (!hasPackage)
+        {
+            var noPkg = SubscriptionUsageCalculator.Resolve(
+                paymentMethod,
+                hasActivePackage: false,
+                isExpired: false,
+                packageTripCount: 0,
+                usedSeatCredits: 0,
+                seatCount: seatCount);
+            return noPkg == SubscriptionCreditDecision.UseCredit;
+        }
+
+        var isExpired = user.SubscriptionExpiresAt < _clock.UtcNow;
+
+        var package = await _db.SubscriptionPackages
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                p => p.Id == user.ActiveSubscriptionPackageId && p.IsActive && !p.IsDeleted,
                 cancellationToken);
 
-        if (existing)
-            throw new AppException("لديك حجز على هذه الرحلة بالفعل");
-
-        var total = trip.PricePerSeat * seatCount;
-        var reference = $"BK-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
-
-        var booking = new Booking
+        if (package is null)
         {
-            TripId = trip.Id,
-            UserId = userId,
-            Status = BookingStatus.Confirmed,
-            SeatCount = seatCount,
-            TotalAmount = total,
-            PaymentMethod = string.IsNullOrWhiteSpace(request.Request.PaymentMethod)
-                ? "cash"
-                : request.Request.PaymentMethod.Trim(),
-            ReferenceCode = reference
+            return false;
+        }
+
+        var activated = user.SubscriptionActivatedAt
+            ?? user.SubscriptionExpiresAt!.Value.AddDays(-Math.Max(package.ValidityDays, 1));
+
+        var used = await _db.Bookings
+            .Where(b =>
+                b.UserId == user.Id &&
+                b.UsesSubscriptionCredit &&
+                b.Status == BookingStatus.Confirmed &&
+                !b.IsDeleted &&
+                b.CreatedAt >= activated &&
+                b.CreatedAt <= user.SubscriptionExpiresAt)
+            .SumAsync(b => (int?)b.SeatCount, cancellationToken) ?? 0;
+
+        var decision = SubscriptionUsageCalculator.Resolve(
+            paymentMethod,
+            hasActivePackage: true,
+            isExpired: isExpired,
+            packageTripCount: package.TripCount,
+            usedSeatCredits: used,
+            seatCount: seatCount);
+
+        return decision switch
+        {
+            SubscriptionCreditDecision.UseCredit => true,
+            SubscriptionCreditDecision.CashExplicit => false,
+            SubscriptionCreditDecision.CashNoPackage => false,
+            SubscriptionCreditDecision.Expired => throw new AppException(
+                "انتهت صلاحية الباقة",
+                400,
+                ErrorCodes.SubscriptionExpired),
+            SubscriptionCreditDecision.LimitReached => throw new AppException(
+                "تم استنفاد رحلات الباقة",
+                400,
+                ErrorCodes.SubscriptionLimitReached),
+            _ => false
         };
+    }
 
-        trip.AvailableSeats -= seatCount;
-        if (trip.AvailableSeats <= 0)
-            trip.Status = TripStatus.DriverAssigned;
+    public async Task<bool> Handle(
+        CancelTripBookingCommand request,
+        CancellationToken cancellationToken)
+    {
+        var userId = RequireUserId();
+        var now = _clock.UtcNow;
 
-        _db.Add(booking);
-        _db.Add(new Invoice
+        var booking = await _db.Bookings
+            .Include(b => b.Trip)
+            .Include(b => b.Invoice)
+            .Where(b =>
+                b.TripId == request.TripId &&
+                b.UserId == userId &&
+                !b.IsDeleted &&
+                b.Status != BookingStatus.Cancelled &&
+                b.Status != BookingStatus.Expired)
+            .OrderByDescending(b => b.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken)
+            ?? throw new NotFoundException("لا يوجد حجز يمكن إلغاؤه");
+
+        var trip = booking.Trip;
+        if (trip.Status is TripStatus.InProgress or TripStatus.Completed or TripStatus.Cancelled)
+            throw new AppException("لا يمكن إلغاء الرحلة بعد بدايتها");
+
+        if (trip.ScheduledAt - now < TimeSpan.FromHours(2))
+            throw new AppException("لا يمكن إلغاء الرحلة قبل أقل من ساعتين من موعدها");
+
+        booking.Status = BookingStatus.Cancelled;
+        booking.UpdatedAt = now;
+
+        await _db.TryIncrementTripSeatsAsync(trip.Id, booking.SeatCount, cancellationToken);
+
+        // Refresh trip status if seats became available again.
+        var available = await _db.Trips
+            .AsNoTracking()
+            .Where(t => t.Id == trip.Id)
+            .Select(t => t.AvailableSeats)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (trip.Status == TripStatus.DriverAssigned && available > 0)
         {
-            BookingId = booking.Id,
-            Amount = total,
-            Status = PaymentStatus.Pending
-        });
+            trip.Status = TripStatus.Scheduled;
+            trip.UpdatedAt = now;
+            _db.Update(trip);
+        }
 
-        var tripRef = trip.ReferenceCode ?? reference;
+        if (booking.Invoice is not null)
+        {
+            booking.Invoice.Status = PaymentStatus.Refunded;
+            booking.Invoice.PaidAt = null;
+            booking.Invoice.UpdatedAt = now;
+        }
+
         _db.Add(new Notification
         {
             UserId = userId,
-            Title = $"رحلة جديدة برقم {tripRef}",
-            Body = "لقد قمت بحجز رحلة جديدة بنجاح.",
+            Title = "تم إلغاء الرحلة",
+            Body = "تم إلغاء حجزك بنجاح.",
             Type = "booking",
             IsRead = false
         });
 
         await _db.SaveChangesAsync(cancellationToken);
-
-        return new CreateBookingResponse(
-            booking.Id,
-            trip.Id,
-            reference,
-            total,
-            booking.Status.ToString(),
-            "تم حجز الرحلة بنجاح");
+        return true;
     }
 
     private Guid RequireUserId() =>
@@ -414,7 +660,9 @@ public class BookingHandlers :
             seatsLabel,
             unavailable ? unchecked((int)0xFF969696) : unchecked((int)0xFF565656),
             unavailable,
-            unavailable);
+            unavailable,
+            trip.PricePerSeat,
+            seats);
     }
 
     private static string ArDayName(DayOfWeek day) => day switch

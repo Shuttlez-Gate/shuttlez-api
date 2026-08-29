@@ -21,17 +21,45 @@ public record RouteDemandExportQuery(RouteDemandAnalysisQuery Filters)
 public record UpdateRouteDemandStatusCommand(string RouteKey, UpdateRouteDemandStatusRequest Request)
     : IRequest<RouteDemandRowDto?>;
 
+public record MapRouteDemandCommand(string RouteKey, Guid RouteId, Guid? AdminUserId)
+    : IRequest<RouteDemandRowDto?>;
+
+public record UnmapRouteDemandCommand(string RouteKey)
+    : IRequest<RouteDemandRowDto?>;
+
+public record LaunchRouteDemandCommand(
+    string RouteKey,
+    LaunchRouteDemandRequest Request,
+    Guid? AdminUserId) : IRequest<RouteDemandLaunchResultDto>;
+
+public record RouteDemandLaunchPlanQuery(RouteDemandAnalysisQuery Filters)
+    : IRequest<RouteLaunchPlanResponseDto>;
+
+public record VehicleCapacitiesQuery : IRequest<IReadOnlyList<VehicleCapacityInfoDto>>;
+
 public class RouteDemandAnalysisHandlers :
     IRequestHandler<RouteDemandSummaryQuery, RouteDemandSummaryDto>,
     IRequestHandler<RouteDemandListQuery, PagedResult<RouteDemandRowDto>>,
     IRequestHandler<RouteDemandDetailsQuery, RouteDemandDetailsDto?>,
     IRequestHandler<RouteDemandPassengersQuery, IReadOnlyList<RouteDemandPassengerDto>>,
     IRequestHandler<RouteDemandExportQuery, IReadOnlyList<RouteDemandExportRowDto>>,
-    IRequestHandler<UpdateRouteDemandStatusCommand, RouteDemandRowDto?>
+    IRequestHandler<UpdateRouteDemandStatusCommand, RouteDemandRowDto?>,
+    IRequestHandler<MapRouteDemandCommand, RouteDemandRowDto?>,
+    IRequestHandler<UnmapRouteDemandCommand, RouteDemandRowDto?>,
+    IRequestHandler<LaunchRouteDemandCommand, RouteDemandLaunchResultDto>,
+    IRequestHandler<RouteDemandLaunchPlanQuery, RouteLaunchPlanResponseDto>,
+    IRequestHandler<VehicleCapacitiesQuery, IReadOnlyList<VehicleCapacityInfoDto>>
 {
     private readonly IRouteDemandAnalysisService _service;
+    private readonly IRouteDemandLaunchService _launch;
 
-    public RouteDemandAnalysisHandlers(IRouteDemandAnalysisService service) => _service = service;
+    public RouteDemandAnalysisHandlers(
+        IRouteDemandAnalysisService service,
+        IRouteDemandLaunchService launch)
+    {
+        _service = service;
+        _launch = launch;
+    }
 
     public Task<RouteDemandSummaryDto> Handle(
         RouteDemandSummaryQuery request,
@@ -67,4 +95,29 @@ public class RouteDemandAnalysisHandlers :
         UpdateRouteDemandStatusCommand request,
         CancellationToken cancellationToken) =>
         _service.UpdateStatusAsync(request.RouteKey, request.Request, cancellationToken);
+
+    public Task<RouteDemandRowDto?> Handle(
+        MapRouteDemandCommand request,
+        CancellationToken cancellationToken) =>
+        _service.MapRouteAsync(request.RouteKey, request.RouteId, request.AdminUserId, cancellationToken);
+
+    public Task<RouteDemandRowDto?> Handle(
+        UnmapRouteDemandCommand request,
+        CancellationToken cancellationToken) =>
+        _service.UnmapRouteAsync(request.RouteKey, cancellationToken);
+
+    public Task<RouteDemandLaunchResultDto> Handle(
+        LaunchRouteDemandCommand request,
+        CancellationToken cancellationToken) =>
+        _launch.LaunchAsync(request.RouteKey, request.Request, request.AdminUserId, cancellationToken);
+
+    public Task<RouteLaunchPlanResponseDto> Handle(
+        RouteDemandLaunchPlanQuery request,
+        CancellationToken cancellationToken) =>
+        _service.GetLaunchPlanAsync(request.Filters, cancellationToken);
+
+    public Task<IReadOnlyList<VehicleCapacityInfoDto>> Handle(
+        VehicleCapacitiesQuery request,
+        CancellationToken cancellationToken) =>
+        _service.GetVehicleCapacitiesAsync(cancellationToken);
 }

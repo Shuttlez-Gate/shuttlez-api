@@ -32,4 +32,12 @@ public class SubscriptionPackagesController : ControllerBase
         var result = await _mediator.Send(new SubscribePackageCommand(id), cancellationToken);
         return Ok(ApiResponse<SubscribePackageResponse>.Ok(result));
     }
+
+    [HttpGet("me")]
+    public async Task<ActionResult<ApiResponse<MySubscriptionDto>>> GetMine(
+        CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new GetMySubscriptionQuery(), cancellationToken);
+        return Ok(ApiResponse<MySubscriptionDto>.Ok(result));
+    }
 }

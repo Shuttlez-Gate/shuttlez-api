@@ -50,6 +50,45 @@ public class AuthController : ControllerBase
         return Ok(ApiResponse<AuthResponseDto>.Ok(result, "تم إنشاء الحساب بنجاح"));
     }
 
+    [HttpPost("social-login")]
+    public async Task<ActionResult<ApiResponse<SocialLoginResultDto>>> SocialLogin(
+        [FromBody] SocialLoginRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(
+            new SocialLoginCommand(request, HttpContext.Connection.RemoteIpAddress?.ToString()),
+            cancellationToken);
+
+        var message = result.RequiresPhoneVerification
+            ? "يلزم توثيق رقم الهاتف لإكمال الربط"
+            : "تم تسجيل الدخول بنجاح";
+        var code = result.RequiresPhoneVerification
+            ? "PHONE_VERIFICATION_REQUIRED"
+            : "AUTHENTICATED";
+
+        return Ok(ApiResponse<SocialLoginResultDto>.Ok(result, message, code));
+    }
+
+    [HttpPost("social-send-otp")]
+    public async Task<ActionResult<ApiResponse<SendOtpResponseDto>>> SocialSendOtp(
+        [FromBody] SocialSendOtpRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new SocialSendOtpCommand(request), cancellationToken);
+        return Ok(ApiResponse<SendOtpResponseDto>.Ok(result, result.Message, "OTP_SENT"));
+    }
+
+    [HttpPost("social-complete")]
+    public async Task<ActionResult<ApiResponse<AuthResponseDto>>> SocialComplete(
+        [FromBody] SocialCompleteRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(
+            new SocialCompleteCommand(request, HttpContext.Connection.RemoteIpAddress?.ToString()),
+            cancellationToken);
+        return Ok(ApiResponse<AuthResponseDto>.Ok(result, "تم إكمال الربط بنجاح", "ACCOUNT_LINKED"));
+    }
+
     [HttpPost("refresh-token")]
     public async Task<ActionResult<ApiResponse<AuthTokensDto>>> RefreshToken(
         [FromBody] RefreshTokenRequest request,

@@ -24,3 +24,10 @@ public class OtpSettings
     /// </summary>
     public bool DeliverCodeForClientPush { get; set; } = true;
 }
+
+public class FirebaseAuthSettings
+{
+    public const string SectionName = "Firebase";
+    public string? ProjectId { get; set; }
+    public string? CredentialsPath { get; set; }
+}

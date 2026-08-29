@@ -15,3 +15,5 @@ public record GetBookingPreviewQuery(
     int VehicleTypeIndex) : IRequest<BookingPreviewDto>;
 
 public record CreateBookingCommand(CreateBookingRequest Request) : IRequest<CreateBookingResponse>;
+
+public record CancelTripBookingCommand(Guid TripId) : IRequest<bool>;

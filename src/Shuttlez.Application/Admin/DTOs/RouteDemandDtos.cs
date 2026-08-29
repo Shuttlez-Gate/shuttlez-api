@@ -53,7 +53,9 @@ public record RouteDemandRowDto(
     DateTime FirstRequestAt,
     DateTime LastRequestAt,
     Guid? AssignedDriverId,
-    string? AssignedDriverName);
+    string? AssignedDriverName,
+    /// <summary>Pricing / launch readiness (estimated; not bookings).</summary>
+    RouteDemandReadinessDto? Readiness = null);
 
 public record RouteDemandDetailsDto(
     string RouteKey,
@@ -77,7 +79,62 @@ public record RouteDemandDetailsDto(
     RouteDemandCaptainDto? Captain,
     IReadOnlyList<RouteDemandPassengerDto> Passengers,
     IReadOnlyList<RouteDemandTimeBucketDto> PreferredDepartureTimes,
-    IReadOnlyList<RouteDemandDayBucketDto> WorkDays);
+    IReadOnlyList<RouteDemandDayBucketDto> WorkDays,
+    RouteDemandReadinessDto? Readiness = null);
+
+/// <summary>
+/// Admin launch-readiness snapshot for a demand corridor.
+/// Financial preview is at configured minimumLaunchRiders only — not collected revenue.
+/// </summary>
+public record RouteDemandReadinessDto(
+    Guid? RouteId,
+    string? RouteName,
+    string? VehicleType,
+    string? VehicleTypeName,
+    int? Capacity,
+    int DemandCount,
+    int UniquePassengers,
+    int ConfirmedPassengers,
+    decimal? OccupancyPercent,
+    int? MinimumLaunchRiders,
+    int? TargetOccupancy,
+    int? RidersRequired,
+    int? RemainingToTarget,
+    bool PricingAvailable,
+    bool PricingLinked,
+    string? PricingSource,
+    decimal? OneWayPrice,
+    decimal? RoundTripPrice,
+    decimal? WeeklyPrice,
+    decimal? MonthlyPrice,
+    decimal? CommissionRate,
+    string? CommissionType,
+    int? LaunchPeriodDays,
+    DateTime? LaunchStartAt,
+    DateTime? LaunchEndAt,
+    bool? LaunchActive,
+    decimal? FinancialAtMinimumOneWayGross,
+    decimal? FinancialAtMinimumRoundTripGross,
+    decimal? FinancialAtMinimumPlatformCommission,
+    decimal? FinancialAtMinimumCaptainEarnings,
+    string LaunchStatus,
+    string ReasonCode,
+    string ReadinessReason,
+    Guid? PricingRuleId,
+    DateTime? LastUpdatedAt,
+    /// <summary>Heuristic capacity from demand-band recommendation (NOT source of truth).</summary>
+    int? DemandBandCapacity = null,
+    /// <summary>VEHICLE_MASTER or DEFAULT_HINT for authoritative Capacity.</summary>
+    string? CapacitySource = null,
+    /// <summary>True when demand-band capacity differs from authoritative Capacity.</summary>
+    bool HasCapacityConflict = false,
+    /// <summary>EXPLICIT (Admin) or EXACT_KEY. Null when unlinked.</summary>
+    string? RouteLinkSource = null,
+    /// <summary>
+    /// When RouteLinkSource is EXPLICIT: EXACT_BIDIRECTIONAL if demand key matches Route.Name endpoints;
+    /// otherwise MANUAL_OVERRIDE (Admin chose a non-exact corridor — never fuzzy).
+    /// </summary>
+    string? MappingCompatibility = null);
 
 public record RouteDemandAnalysisQuery(
     string? Search = null,
@@ -91,9 +148,37 @@ public record RouteDemandAnalysisQuery(
     DateTime? CreatedFrom = null,
     DateTime? CreatedTo = null,
     int? Page = null,
-    int? PageSize = null);
+    int? PageSize = null,
+    string? LaunchStatus = null,
+    bool? PricingAvailable = null,
+    bool? ReadyToLaunch = null,
+    string? RouteKey = null);
 
 public record UpdateRouteDemandStatusRequest(string Status, Guid? AssignedDriverId = null);
+
+public record MapRouteDemandRequest(Guid RouteId);
+
+/// <summary>Admin launch parameters only — price/capacity/commission resolved server-side.</summary>
+public record LaunchRouteDemandRequest(
+    DateTime ScheduledAt,
+    Guid? DriverId = null,
+    Guid? VehicleId = null);
+
+public record RouteDemandLaunchResultDto(
+    Guid TripId,
+    Guid RouteId,
+    string RouteName,
+    Guid? DriverId,
+    Guid? VehicleId,
+    string? VehicleType,
+    string Status,
+    DateTime ScheduledAt,
+    decimal PricePerSeat,
+    int AvailableSeats,
+    decimal CommissionPercent,
+    string? ReferenceCode,
+    DateTime CreatedAt,
+    string Message);
 
 public record RouteDemandExportRowDto(
     int Rank,

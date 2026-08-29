@@ -27,9 +27,15 @@ public class ContentController : ControllerBase
     [HttpGet("legal/{slug}")]
     public async Task<ActionResult<ApiResponse<LegalDocumentDto>>> GetLegal(
         string slug,
+        [FromQuery] string? lang,
+        [FromQuery] string? language,
+        [FromHeader(Name = "Accept-Language")] string? acceptLanguage,
         CancellationToken cancellationToken)
     {
-        var doc = await _mediator.Send(new GetLegalDocumentQuery(slug), cancellationToken);
+        var requested = lang ?? language ?? acceptLanguage;
+        var doc = await _mediator.Send(
+            new GetLegalDocumentQuery(slug, requested),
+            cancellationToken);
         return Ok(ApiResponse<LegalDocumentDto>.Ok(doc));
     }
 }

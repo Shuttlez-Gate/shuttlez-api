@@ -34,14 +34,15 @@ public class ExceptionHandlingMiddleware
     {
         await ApplyCorsHeadersAsync(context);
 
-        var (statusCode, message, errors) = exception switch
+        var (statusCode, message, errors, code) = exception switch
         {
-            AppException appEx => (appEx.StatusCode, appEx.Message, new[] { appEx.Message }),
+            AppException appEx => (appEx.StatusCode, appEx.Message, new[] { appEx.Message }, appEx.Code),
             ValidationException validationEx => (
                 400,
                 "بيانات غير صالحة",
-                validationEx.Errors.Select(e => e.ErrorMessage).ToArray()),
-            _ => (500, "حدث خطأ غير متوقع", new[] { "Internal Server Error" })
+                validationEx.Errors.Select(e => e.ErrorMessage).ToArray(),
+                "VALIDATION_ERROR"),
+            _ => (500, "حدث خطأ غير متوقع", new[] { SafeError(exception) }, "INTERNAL_SERVER_ERROR")
         };
 
         if (statusCode >= 500)
@@ -56,6 +57,7 @@ public class ExceptionHandlingMiddleware
         {
             Success = false,
             Message = message,
+            Code = code,
             Errors = errors
         };
         await context.Response.WriteAsync(JsonSerializer.Serialize(response, new JsonSerializerOptions
@@ -82,5 +84,21 @@ public class ExceptionHandlingMiddleware
 
         var result = corsService.EvaluatePolicy(context, policy);
         corsService.ApplyResult(result, context.Response);
+    }
+
+    private static string SafeError(Exception exception)
+    {
+        var parts = new List<string> { $"{exception.GetType().Name}: {exception.Message}" };
+        if (exception.InnerException is { } inner)
+        {
+            parts.Add($"{inner.GetType().Name}: {inner.Message}");
+        }
+
+        var text = string.Join(" | ", parts);
+        return System.Text.RegularExpressions.Regex.Replace(
+            text,
+            @"(Password|Pwd)\s*=\s*[^;]+",
+            "$1=***",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 }

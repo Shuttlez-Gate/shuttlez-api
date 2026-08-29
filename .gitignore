@@ -36,6 +36,9 @@ artifacts/
 .env
 appsettings.Local.json
 appsettings.*.local.json
+secrets/
+**/firebase-adminsdk*.json
+**/serviceAccount*.json
 
 ## OS
 .DS_Store

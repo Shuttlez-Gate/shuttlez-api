@@ -67,13 +67,22 @@ var allowedOrigins = corsSettings.AllowedOrigins
 
 if (allowedOrigins.Length == 0)
 {
-    throw new InvalidOperationException(
-        "Cors:AllowedOrigins must include at least one origin (e.g. https://shuttlez.org).");
+    allowedOrigins =
+    [
+        "https://shuttlez.org",
+        "https://www.shuttlez.org",
+        "https://shuttlez-dashboard.web.app",
+        "https://shuttlez-dashboard.firebaseapp.com",
+        "https://shuttlez-landing.web.app",
+        "https://shuttlez-landing.firebaseapp.com",
+    ];
 }
 
 builder.Services.Configure<CorsSettings>(builder.Configuration.GetSection(CorsSettings.SectionName));
 builder.Services.Configure<Shuttlez.Application.Landing.CaptainLaunchOfferSettings>(
     builder.Configuration.GetSection(Shuttlez.Application.Landing.CaptainLaunchOfferSettings.SectionName));
+builder.Services.Configure<Shuttlez.Application.Bookings.ShuttleCommissionSettings>(
+    builder.Configuration.GetSection(Shuttlez.Application.Bookings.ShuttleCommissionSettings.SectionName));
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IDriverRealtimeNotifier, DriverRealtimeNotifier>();
 builder.Services.AddSingleton<ISupportChatRealtimeNotifier, SupportChatRealtimeNotifier>();
@@ -90,31 +99,13 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-using (var scope = app.Services.CreateScope())
+// Shared hosting (itempurl): never block IIS startup on DB migrate/seed.
+if (app.Environment.IsDevelopment())
 {
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    var startupLogger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-    try
-    {
-        await db.Database.MigrateAsync();
-        await DbSeeder.SeedAsync(db);
-    }
-    catch (Exception ex)
-    {
-        startupLogger.LogError(ex, "Database migrate/seed failed on startup — API will still start.");
-        try
-        {
-            var logDir = Path.Combine(app.Environment.ContentRootPath, "logs");
-            Directory.CreateDirectory(logDir);
-            await File.WriteAllTextAsync(
-                Path.Combine(logDir, "startup-error.txt"),
-                $"{DateTime.UtcNow:O}{Environment.NewLine}{ex}{Environment.NewLine}");
-        }
-        catch
-        {
-            // Best-effort file log for shared hosting when stdout is unavailable.
-        }
-    }
+    await db.Database.MigrateAsync();
+    await DbSeeder.SeedAsync(db);
 }
 
 app.UseSerilogRequestLogging();
@@ -125,6 +116,11 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
+        | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto,
+});
 app.UseRouting();
 app.UseCors(CorsSettings.PolicyName);
 
@@ -136,27 +132,20 @@ if (string.IsNullOrWhiteSpace(webRoot))
 }
 
 Directory.CreateDirectory(Path.Combine(webRoot, "uploads"));
+Directory.CreateDirectory(Path.Combine(app.Environment.ContentRootPath, "logs"));
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(webRoot),
     RequestPath = ""
 });
 
-if (!app.Environment.IsDevelopment())
-{
-    app.UseForwardedHeaders(new ForwardedHeadersOptions
-    {
-        ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
-            | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto,
-    });
-    app.UseHttpsRedirection();
-}
-
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseMiddleware<DriverTripsRateLimitMiddleware>();
 
+// Health is served only by HealthController (api/v1/health).
+// Do not MapGet the same path here — duplicate endpoints cause AmbiguousMatchException → HTTP 500.
 app.MapControllers();
 app.MapHub<TripTrackingHub>("/hubs/trip-tracking");
 app.MapHub<SupportChatHub>("/hubs/support-chat");

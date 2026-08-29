@@ -28,6 +28,18 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<decimal>("CaptainEarnings")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("CommissionAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("CommissionRate")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("numeric(9,6)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -37,6 +49,10 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                     b.Property<string>("PaymentMethod")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<decimal>("PricePerSeat")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<string>("ReferenceCode")
                         .HasColumnType("text");
@@ -48,7 +64,8 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                         .HasColumnType("integer");
 
                     b.Property<decimal>("TotalAmount")
-                        .HasColumnType("numeric");
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<Guid>("TripId")
                         .HasColumnType("uuid");
@@ -59,6 +76,9 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid");
 
+                    b.Property<bool>("UsesSubscriptionCredit")
+                        .HasColumnType("boolean");
+
                     b.HasKey("Id");
 
                     b.HasIndex("TripId");
@@ -66,6 +86,44 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("BookingsSet");
+                });
+
+            modelBuilder.Entity("Shuttlez.Domain.Entities.CommissionRule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("EffectiveFrom")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("EffectiveTo")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<decimal>("PlatformCommissionPercent")
+                        .HasPrecision(9, 4)
+                        .HasColumnType("numeric(9,4)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("CommissionRulesSet");
                 });
 
             modelBuilder.Entity("Shuttlez.Domain.Entities.Driver", b =>
@@ -237,6 +295,250 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                     b.ToTable("FaqItemsSet");
                 });
 
+            modelBuilder.Entity("Shuttlez.Domain.Entities.GroupFareRule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("BaseFare")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("CharterFlatFare")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("EffectiveFrom")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("EffectiveTo")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FromZoneKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("MaxMembers")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal?>("MaximumFare")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal?>("MinimumFare")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<decimal>("PricePerKm")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("ToZoneKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FromZoneKey", "ToZoneKey", "IsActive");
+
+                    b.ToTable("GroupFareRulesSet", (string)null);
+                });
+
+            modelBuilder.Entity("Shuttlez.Domain.Entities.GroupMember", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("GroupRequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsOrganizer")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("JoinedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("GroupRequestId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("GroupMembersSet", (string)null);
+                });
+
+            modelBuilder.Entity("Shuttlez.Domain.Entities.GroupRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("AssignedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("BaseFareApplied")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Capacity")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("CaptainEarnings")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("CommissionAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("CommissionRate")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("numeric(9,6)");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ConfirmedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DestinationAddress")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<double>("DestinationLatitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("DestinationLongitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<decimal?>("DistanceKm")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid?>("DriverId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("FareAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("FromZoneKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid?>("GroupFareRuleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsCashConfirmed")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("JoinedMemberCount")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("MembershipLocked")
+                        .HasColumnType("boolean");
+
+                    b.Property<decimal?>("MinimumFareApplied")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid>("OrganizerUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PaymentMethod")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("PickupAddress")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<double>("PickupLatitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("PickupLongitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<decimal?>("PricePerKmApplied")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("ReferenceCode")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ToZoneKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<decimal>("TotalAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DriverId");
+
+                    b.HasIndex("GroupFareRuleId");
+
+                    b.HasIndex("OrganizerUserId");
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("GroupRequestsSet", (string)null);
+                });
+
             modelBuilder.Entity("Shuttlez.Domain.Entities.Invoice", b =>
                 {
                     b.Property<Guid>("Id")
@@ -244,7 +546,8 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<decimal>("Amount")
-                        .HasColumnType("numeric");
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<Guid>("BookingId")
                         .HasColumnType("uuid");
@@ -423,6 +726,9 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("ContentEn")
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -438,6 +744,9 @@ namespace Shuttlez.Infrastructure.Data.Migrations
 
                     b.Property<string>("Title")
                         .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TitleEn")
                         .HasColumnType("text");
 
                     b.Property<DateTime?>("UpdatedAt")
@@ -533,6 +842,88 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                     b.ToTable("OtpRequestsSet");
                 });
 
+            modelBuilder.Entity("Shuttlez.Domain.Entities.PricingRule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("EffectiveFrom")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("EffectiveTo")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<decimal>("LaunchCommissionPercent")
+                        .HasPrecision(9, 4)
+                        .HasColumnType("numeric(9,4)");
+
+                    b.Property<int>("LaunchPeriodDays")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("LaunchStartAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("MinimumLaunchRiders")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("MonthlyPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<decimal>("OneWayPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("PermanentCommissionPercent")
+                        .HasPrecision(9, 4)
+                        .HasColumnType("numeric(9,4)");
+
+                    b.Property<decimal>("RoundTripPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid?>("RouteId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("TargetOccupancy")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("VehicleType")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("WeeklyPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EffectiveFrom");
+
+                    b.HasIndex("EffectiveTo");
+
+                    b.HasIndex("RouteId", "VehicleType", "IsActive");
+
+                    b.ToTable("PricingRulesSet", (string)null);
+                });
+
             modelBuilder.Entity("Shuttlez.Domain.Entities.RefreshToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -612,6 +1003,207 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("ReviewsSet");
+                });
+
+            modelBuilder.Entity("Shuttlez.Domain.Entities.RideFareRule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("BaseFare")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("EffectiveFrom")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("EffectiveTo")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("FlatFare")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("FromZoneKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<decimal?>("MaximumFare")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal?>("MinimumFare")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<decimal>("PricePerKm")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("ToZoneKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FromZoneKey", "ToZoneKey", "IsActive");
+
+                    b.ToTable("RideFareRulesSet", (string)null);
+                });
+
+            modelBuilder.Entity("Shuttlez.Domain.Entities.RideRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("AssignedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("BaseFareApplied")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("CaptainEarnings")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<double?>("CaptainLatitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTime?>("CaptainLocationUpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double?>("CaptainLongitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<decimal>("CommissionAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("CommissionRate")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("numeric(9,6)");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DestinationAddress")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<double>("DestinationLatitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("DestinationLongitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<decimal?>("DistanceKm")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid?>("DriverId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("FareAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("FromZoneKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("IsCashConfirmed")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<decimal?>("MinimumFareApplied")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("PaymentMethod")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("PickupAddress")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<double>("PickupLatitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("PickupLongitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<decimal?>("PricePerKmApplied")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("ReferenceCode")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<Guid?>("RideFareRuleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("RiderUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ToZoneKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<decimal>("TotalAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DriverId");
+
+                    b.HasIndex("RideFareRuleId");
+
+                    b.HasIndex("RiderUserId");
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("RideRequestsSet", (string)null);
                 });
 
             modelBuilder.Entity("Shuttlez.Domain.Entities.Route", b =>
@@ -695,6 +1287,15 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
+                    b.Property<DateTime?>("MappedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("MappedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("MappedRouteId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("RouteKey")
                         .IsRequired()
                         .HasColumnType("text");
@@ -709,6 +1310,8 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("AssignedDriverId");
+
+                    b.HasIndex("MappedRouteId");
 
                     b.HasIndex("RouteKey")
                         .IsUnique();
@@ -989,7 +1592,8 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                         .HasColumnType("boolean");
 
                     b.Property<decimal>("PricePerSeat")
-                        .HasColumnType("numeric");
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<string>("ReferenceCode")
                         .HasColumnType("text");
@@ -1024,6 +1628,9 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("ActiveSubscriptionPackageId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("AvatarUrl")
                         .HasColumnType("text");
 
@@ -1031,6 +1638,9 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Email")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FacebookProviderId")
                         .HasColumnType("text");
 
                     b.Property<string>("FcmToken")
@@ -1041,6 +1651,9 @@ namespace Shuttlez.Infrastructure.Data.Migrations
 
                     b.Property<int?>("Gender")
                         .HasColumnType("integer");
+
+                    b.Property<string>("GoogleProviderId")
+                        .HasColumnType("text");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
@@ -1058,6 +1671,12 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                     b.Property<int>("RatingCount")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime?>("SubscriptionActivatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("SubscriptionExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1066,10 +1685,64 @@ namespace Shuttlez.Infrastructure.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("FacebookProviderId")
+                        .IsUnique()
+                        .HasFilter("\"FacebookProviderId\" IS NOT NULL");
+
+                    b.HasIndex("GoogleProviderId")
+                        .IsUnique()
+                        .HasFilter("\"GoogleProviderId\" IS NOT NULL");
+
                     b.HasIndex("Phone")
                         .IsUnique();
 
                     b.ToTable("UsersSet");
+                });
+
+            modelBuilder.Entity("Shuttlez.Domain.Entities.UserDevice", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Token")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Token");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "Token")
+                        .IsUnique();
+
+                    b.ToTable("UserDevicesSet", (string)null);
                 });
 
             modelBuilder.Entity("Shuttlez.Domain.Entities.Vehicle", b =>
@@ -1227,6 +1900,50 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                     b.Navigation("Driver");
                 });
 
+            modelBuilder.Entity("Shuttlez.Domain.Entities.GroupMember", b =>
+                {
+                    b.HasOne("Shuttlez.Domain.Entities.GroupRequest", "GroupRequest")
+                        .WithMany("Members")
+                        .HasForeignKey("GroupRequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Shuttlez.Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("GroupRequest");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Shuttlez.Domain.Entities.GroupRequest", b =>
+                {
+                    b.HasOne("Shuttlez.Domain.Entities.Driver", "Driver")
+                        .WithMany()
+                        .HasForeignKey("DriverId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Shuttlez.Domain.Entities.GroupFareRule", "GroupFareRule")
+                        .WithMany()
+                        .HasForeignKey("GroupFareRuleId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Shuttlez.Domain.Entities.User", "Organizer")
+                        .WithMany()
+                        .HasForeignKey("OrganizerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Driver");
+
+                    b.Navigation("GroupFareRule");
+
+                    b.Navigation("Organizer");
+                });
+
             modelBuilder.Entity("Shuttlez.Domain.Entities.Invoice", b =>
                 {
                     b.HasOne("Shuttlez.Domain.Entities.Booking", "Booking")
@@ -1258,6 +1975,16 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Shuttlez.Domain.Entities.PricingRule", b =>
+                {
+                    b.HasOne("Shuttlez.Domain.Entities.Route", "Route")
+                        .WithMany()
+                        .HasForeignKey("RouteId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Route");
+                });
+
             modelBuilder.Entity("Shuttlez.Domain.Entities.RefreshToken", b =>
                 {
                     b.HasOne("Shuttlez.Domain.Entities.User", "User")
@@ -1280,6 +2007,31 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Shuttlez.Domain.Entities.RideRequest", b =>
+                {
+                    b.HasOne("Shuttlez.Domain.Entities.Driver", "Driver")
+                        .WithMany()
+                        .HasForeignKey("DriverId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Shuttlez.Domain.Entities.RideFareRule", "RideFareRule")
+                        .WithMany()
+                        .HasForeignKey("RideFareRuleId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Shuttlez.Domain.Entities.User", "Rider")
+                        .WithMany()
+                        .HasForeignKey("RiderUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Driver");
+
+                    b.Navigation("RideFareRule");
+
+                    b.Navigation("Rider");
+                });
+
             modelBuilder.Entity("Shuttlez.Domain.Entities.RouteDemandGroupState", b =>
                 {
                     b.HasOne("Shuttlez.Domain.Entities.Driver", "AssignedDriver")
@@ -1287,7 +2039,14 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                         .HasForeignKey("AssignedDriverId")
                         .OnDelete(DeleteBehavior.SetNull);
 
+                    b.HasOne("Shuttlez.Domain.Entities.Route", "MappedRoute")
+                        .WithMany()
+                        .HasForeignKey("MappedRouteId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.Navigation("AssignedDriver");
+
+                    b.Navigation("MappedRoute");
                 });
 
             modelBuilder.Entity("Shuttlez.Domain.Entities.RouteRequest", b =>
@@ -1368,6 +2127,17 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                     b.Navigation("Route");
                 });
 
+            modelBuilder.Entity("Shuttlez.Domain.Entities.UserDevice", b =>
+                {
+                    b.HasOne("Shuttlez.Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("Shuttlez.Domain.Entities.Wallet", b =>
                 {
                     b.HasOne("Shuttlez.Domain.Entities.User", "User")
@@ -1400,6 +2170,11 @@ namespace Shuttlez.Infrastructure.Data.Migrations
                     b.Navigation("Documents");
 
                     b.Navigation("Trips");
+                });
+
+            modelBuilder.Entity("Shuttlez.Domain.Entities.GroupRequest", b =>
+                {
+                    b.Navigation("Members");
                 });
 
             modelBuilder.Entity("Shuttlez.Domain.Entities.Route", b =>

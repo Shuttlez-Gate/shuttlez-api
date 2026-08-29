@@ -108,7 +108,8 @@ public class AdminContentHandlers :
         await _db.LegalDocuments
             .Where(d => !d.IsDeleted)
             .OrderBy(d => d.Slug)
-            .Select(d => new AdminLegalDto(d.Id, d.Slug, d.Title, d.Content, d.IsActive, d.UpdatedAt))
+            .Select(d => new AdminLegalDto(
+                d.Id, d.Slug, d.Title, d.Content, d.TitleEn, d.ContentEn, d.IsActive, d.UpdatedAt))
             .ToListAsync(cancellationToken);
 
     public async Task<AdminLegalDto> Handle(
@@ -151,6 +152,8 @@ public class AdminContentHandlers :
         doc.Slug = slug;
         doc.Title = body.Title.Trim();
         doc.Content = body.Content;
+        doc.TitleEn = string.IsNullOrWhiteSpace(body.TitleEn) ? null : body.TitleEn.Trim();
+        doc.ContentEn = string.IsNullOrWhiteSpace(body.ContentEn) ? null : body.ContentEn;
         doc.IsActive = body.IsActive;
         doc.UpdatedAt = _clock.UtcNow;
 

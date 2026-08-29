@@ -1,0 +1,19 @@
+DRIVER_ENTITY_ID=419f36e6-61e7-42d2-807f-879557387891 userId=7f43f19c-0e9e-4b14-8470-a5f52eb48787 phone=+201008879097
+RIDE_CURRENT status=Assigned total=99.00 payment=cash driver=419f36e6-61e7-42d2-807f-879557387891
+RIDE_START status=InProgress idem=False
+RIDE_START_IDEM status=InProgress idem=True
+RIDE_COMPLETE status=Completed idem=False
+RIDE_COMPLETE_IDEM status=Completed idem=True
+RIDE_FINAL status=Completed total=99.00 cash=True
+WRONG_CAPTAIN_BLOCKED_OK
+RIDE2_CANCELLED status=Cancelled
+GROUP_CREATED id=21bf5c32-4dcd-44fa-9932-b7a9a4890369 status=Draft capacity=2 joined=1 total=0.00
+GROUP_JOINED joined=2
+GROUP_CAPACITY_BLOCKED_OK
+GROUP_CONFIRMED status=Confirmed locked=True cash=True total=360.00 payment=cash commission=0.00
+GROUP_LOCK_BLOCKS_JOIN_OK
+GROUP_ASSIGNED status=Assigned driver=419f36e6-61e7-42d2-807f-879557387891
+GROUP_START status=InProgress
+GROUP_COMPLETE status=Completed
+GROUP_FINAL status=Completed total=360.00
+RIDER_CANNOT_ADMIN_ASSIGN_OK

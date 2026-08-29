@@ -10,10 +10,15 @@ public class User : BaseEntity
     public string? Email { get; set; }
     public Gender? Gender { get; set; }
     public string? AvatarUrl { get; set; }
+    public string? GoogleProviderId { get; set; }
+    public string? FacebookProviderId { get; set; }
     public UserType UserType { get; set; } = UserType.Passenger;
     public decimal RatingAverage { get; set; }
     public int RatingCount { get; set; }
     public string? FcmToken { get; set; }
+    public Guid? ActiveSubscriptionPackageId { get; set; }
+    public DateTime? SubscriptionExpiresAt { get; set; }
+    public DateTime? SubscriptionActivatedAt { get; set; }
     public bool IsActive { get; set; } = true;
 
     public Driver? Driver { get; set; }

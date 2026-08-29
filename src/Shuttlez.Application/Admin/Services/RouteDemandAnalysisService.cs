@@ -27,6 +27,23 @@ public interface IRouteDemandAnalysisService
         string routeKey,
         UpdateRouteDemandStatusRequest request,
         CancellationToken cancellationToken);
+
+    Task<RouteDemandRowDto?> MapRouteAsync(
+        string routeKey,
+        Guid routeId,
+        Guid? adminUserId,
+        CancellationToken cancellationToken);
+
+    Task<RouteDemandRowDto?> UnmapRouteAsync(
+        string routeKey,
+        CancellationToken cancellationToken);
+
+    Task<RouteLaunchPlanResponseDto> GetLaunchPlanAsync(
+        RouteDemandAnalysisQuery query,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<VehicleCapacityInfoDto>> GetVehicleCapacitiesAsync(
+        CancellationToken cancellationToken);
 }
 
 public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
@@ -44,8 +61,18 @@ public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
     ];
 
     private readonly IAppDbContext _db;
+    private readonly IRouteDemandReadinessEnricher _readiness;
+    private readonly IDateTimeProvider _clock;
 
-    public RouteDemandAnalysisService(IAppDbContext db) => _db = db;
+    public RouteDemandAnalysisService(
+        IAppDbContext db,
+        IRouteDemandReadinessEnricher readiness,
+        IDateTimeProvider clock)
+    {
+        _db = db;
+        _readiness = readiness;
+        _clock = clock;
+    }
 
     public async Task<RouteDemandSummaryDto> GetSummaryAsync(CancellationToken cancellationToken)
     {
@@ -68,7 +95,9 @@ public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
     {
         var page = Math.Max(1, query.Page ?? 1);
         var pageSize = Math.Clamp(query.PageSize ?? 20, 1, 100);
-        var filtered = ApplyFilters(await BuildGroupsAsync(cancellationToken), query);
+        var groups = await BuildGroupsAsync(cancellationToken);
+        await AttachReadinessAsync(groups, cancellationToken);
+        var filtered = ApplyFilters(groups, query);
         var total = filtered.Count;
         var items = filtered
             .Skip((page - 1) * pageSize)
@@ -83,10 +112,11 @@ public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
         string routeKey,
         CancellationToken cancellationToken)
     {
-        var group = (await BuildGroupsAsync(cancellationToken))
-            .FirstOrDefault(g => g.RouteKey == routeKey);
-
-        return group is null ? null : ToDetails(group);
+        var groups = await BuildGroupsAsync(cancellationToken);
+        var group = groups.FirstOrDefault(g => g.RouteKey == routeKey);
+        if (group is null) return null;
+        await AttachReadinessAsync([group], cancellationToken);
+        return ToDetails(group);
     }
 
     public async Task<IReadOnlyList<RouteDemandPassengerDto>> GetPassengersAsync(
@@ -106,7 +136,9 @@ public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
         RouteDemandAnalysisQuery query,
         CancellationToken cancellationToken)
     {
-        var filtered = ApplyFilters(await BuildGroupsAsync(cancellationToken), query);
+        var groups = await BuildGroupsAsync(cancellationToken);
+        await AttachReadinessAsync(groups, cancellationToken);
+        var filtered = ApplyFilters(groups, query);
 
         return filtered
             .Select((g, index) =>
@@ -174,24 +206,395 @@ public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
 
         await _db.SaveChangesAsync(cancellationToken);
 
-        var group = (await BuildGroupsAsync(cancellationToken))
-            .FirstOrDefault(g => g.RouteKey == routeKey);
+        var groups = await BuildGroupsAsync(cancellationToken);
+        var group = groups.FirstOrDefault(g => g.RouteKey == routeKey);
+        if (group is null) return null;
+        await AttachReadinessAsync([group], cancellationToken);
+        return ToRow(group, 0);
+    }
 
-        return group is null ? null : ToRow(group, 0);
+    public async Task<RouteDemandRowDto?> MapRouteAsync(
+        string routeKey,
+        Guid routeId,
+        Guid? adminUserId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(routeKey))
+            throw new InvalidOperationException("مفتاح مجموعة الطلب مطلوب.");
+
+        var groups = await BuildGroupsAsync(cancellationToken);
+        if (groups.All(g => g.RouteKey != routeKey))
+            throw new InvalidOperationException("مجموعة الطلب غير موجودة.");
+
+        var route = await _db.Routes
+            .AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == routeId && !r.IsDeleted && r.IsActive, cancellationToken);
+        if (route is null)
+            throw new InvalidOperationException("المسار الرسمي غير موجود أو غير نشط.");
+
+        // One catalog Route may only map to one demand corridor at a time.
+        try
+        {
+            var conflict = await _db.RouteDemandGroupStates
+                .AsNoTracking()
+                .FirstOrDefaultAsync(
+                    s => !s.IsDeleted &&
+                         s.MappedRouteId == routeId &&
+                         s.RouteKey != routeKey,
+                    cancellationToken);
+            if (conflict is not null)
+            {
+                throw new InvalidOperationException(
+                    "هذا المسار مرتبط بالفعل بمجموعة طلب أخرى. أزل الربط السابق أولاً.");
+            }
+        }
+        catch (Exception ex) when (IsMissingMappedRouteColumn(ex))
+        {
+            throw new InvalidOperationException(
+                "ترحيل ربط المسار غير مُطبَّق على قاعدة البيانات. موافقة المشغّل مطلوبة.");
+        }
+
+        RouteDemandGroupState? state;
+        try
+        {
+            state = await _db.RouteDemandGroupStates
+                .FirstOrDefaultAsync(s => s.RouteKey == routeKey && !s.IsDeleted, cancellationToken);
+        }
+        catch (Exception ex) when (IsMissingMappedRouteColumn(ex))
+        {
+            throw new InvalidOperationException(
+                "ترحيل ربط المسار غير مُطبَّق على قاعدة البيانات. موافقة المشغّل مطلوبة.");
+        }
+
+        var now = _clock.UtcNow;
+        if (state is null)
+        {
+            state = new RouteDemandGroupState
+            {
+                RouteKey = routeKey,
+                Status = "collecting_demand",
+                MappedRouteId = routeId,
+                MappedAt = now,
+                MappedByUserId = adminUserId,
+            };
+            _db.Add(state);
+        }
+        else
+        {
+            state.MappedRouteId = routeId;
+            state.MappedAt = now;
+            state.MappedByUserId = adminUserId;
+            state.UpdatedAt = now;
+            _db.Update(state);
+        }
+
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex) when (IsMissingMappedRouteColumn(ex))
+        {
+            throw new InvalidOperationException(
+                "ترحيل ربط المسار غير مُطبَّق على قاعدة البيانات. موافقة المشغّل مطلوبة.");
+        }
+
+        groups = await BuildGroupsAsync(cancellationToken);
+        var group = groups.FirstOrDefault(g => g.RouteKey == routeKey);
+        if (group is null) return null;
+        await AttachReadinessAsync([group], cancellationToken);
+        return ToRow(group, 0);
+    }
+
+    public async Task<RouteDemandRowDto?> UnmapRouteAsync(
+        string routeKey,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(routeKey))
+            throw new InvalidOperationException("مفتاح مجموعة الطلب مطلوب.");
+
+        var state = await _db.RouteDemandGroupStates
+            .FirstOrDefaultAsync(s => s.RouteKey == routeKey && !s.IsDeleted, cancellationToken);
+        if (state is null)
+            throw new InvalidOperationException("لا يوجد ربط محفوظ لهذه المجموعة.");
+
+        state.MappedRouteId = null;
+        state.MappedAt = null;
+        state.MappedByUserId = null;
+        state.UpdatedAt = _clock.UtcNow;
+        _db.Update(state);
+
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex) when (IsMissingMappedRouteColumn(ex))
+        {
+            throw new InvalidOperationException(
+                "ترحيل ربط المسار غير مُطبَّق على قاعدة البيانات. موافقة المشغّل مطلوبة.");
+        }
+
+        var groups = await BuildGroupsAsync(cancellationToken);
+        var group = groups.FirstOrDefault(g => g.RouteKey == routeKey);
+        if (group is null) return null;
+        await AttachReadinessAsync([group], cancellationToken);
+        return ToRow(group, 0);
+    }
+
+    public async Task<RouteLaunchPlanResponseDto> GetLaunchPlanAsync(
+        RouteDemandAnalysisQuery query,
+        CancellationToken cancellationToken)
+    {
+        // Planning status filter applied after mapping (READY_TO_LAUNCH ≠ READY).
+        var preFilter = query with { LaunchStatus = null, ReadyToLaunch = null };
+        var groups = await BuildGroupsAsync(cancellationToken);
+        await AttachReadinessAsync(groups, cancellationToken);
+        var filtered = ApplyFilters(groups, preFilter);
+
+        var caps = await GetVehicleCapacitiesAsync(cancellationToken);
+        var sourceByType = caps.ToDictionary(
+            c => c.VehicleType,
+            c => c.Source,
+            StringComparer.OrdinalIgnoreCase);
+
+        IEnumerable<RouteLaunchPlanDto> plans = filtered
+            .Where(g => g.Readiness is not null)
+            .Select(g =>
+            {
+                var src = g.Readiness!.VehicleType is string vt &&
+                          sourceByType.TryGetValue(vt, out var s)
+                    ? s
+                    : null;
+                return RouteLaunchPlanMapper.FromReadiness(
+                    g.Readiness!,
+                    g.RouteKey,
+                    g.RouteLabel,
+                    g.EndpointA,
+                    g.EndpointB,
+                    src);
+            });
+
+        if (!string.IsNullOrWhiteSpace(query.RouteKey))
+        {
+            var key = query.RouteKey.Trim();
+            plans = plans.Where(p => p.RouteKey == key);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.LaunchStatus))
+        {
+            var st = query.LaunchStatus.Trim().ToUpperInvariant();
+            plans = plans.Where(p => p.LaunchStatus == st);
+        }
+
+        if (query.PricingAvailable is bool pricingOk)
+            plans = plans.Where(p => p.PricingAvailable == pricingOk);
+
+        if (query.ReadyToLaunch == true)
+            plans = plans.Where(p => p.LaunchStatus is "READY_TO_LAUNCH" or "FULL");
+
+        var list = plans
+            .OrderBy(p => RouteLaunchPlanMapper.PlanningSortRank(p.LaunchStatus))
+            .ThenByDescending(p => p.Demand)
+            .ThenBy(p => p.RouteLabel, StringComparer.Ordinal)
+            .ToList();
+
+        return new RouteLaunchPlanResponseDto(list, RouteLaunchPlanMapper.BuildSummary(list));
+    }
+
+    public async Task<IReadOnlyList<VehicleCapacityInfoDto>> GetVehicleCapacitiesAsync(
+        CancellationToken cancellationToken)
+    {
+        var fleet = await _db.Vehicles
+            .AsNoTracking()
+            .Where(v => !v.IsDeleted && v.IsActive && v.Capacity > 0)
+            .GroupBy(v => v.Type)
+            .Select(g => new { Type = g.Key, Cap = g.Max(v => v.Capacity) })
+            .ToListAsync(cancellationToken);
+
+        var byType = fleet.ToDictionary(x => x.Type, x => x.Cap);
+        var defaults = new Dictionary<Domain.Enums.VehicleType, int>
+        {
+            [Domain.Enums.VehicleType.CarShuttle] = 4,
+            [Domain.Enums.VehicleType.MiniBus] = 13,
+            [Domain.Enums.VehicleType.Bus] = 24,
+        };
+
+        return Enum.GetValues<Domain.Enums.VehicleType>()
+            .Select(t =>
+            {
+                if (byType.TryGetValue(t, out var cap) && cap > 0)
+                {
+                    return new VehicleCapacityInfoDto(
+                        t.ToString(),
+                        RouteLaunchPlanMapper.VehicleDisplayName(t),
+                        cap,
+                        "VEHICLE_MASTER");
+                }
+
+                return new VehicleCapacityInfoDto(
+                    t.ToString(),
+                    RouteLaunchPlanMapper.VehicleDisplayName(t),
+                    defaults.GetValueOrDefault(t, 0),
+                    "DEFAULT_HINT");
+            })
+            .Where(x => x.Capacity > 0)
+            .ToList();
+    }
+
+    private async Task AttachReadinessAsync(
+        List<RouteDemandGroup> groups,
+        CancellationToken cancellationToken)
+    {
+        if (groups.Count == 0) return;
+
+        var sources = groups.Select(g => new RouteDemandReadinessSource(
+            g.RouteKey,
+            g.EndpointA,
+            g.EndpointB,
+            g.TotalRequests,
+            g.ConfirmedPassengers,
+            g.UniquePassengers,
+            g.Vehicle.Code,
+            g.Captain?.VehicleType,
+            g.Passengers
+                .Select(p => p.PreferredVehicleType)
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .Select(v => v!)
+                .ToList(),
+            g.MappedRouteId)).ToList();
+
+        var map = await _readiness.EnrichAsync(sources, _clock.UtcNow, cancellationToken);
+
+        var routeIds = map.Values.Where(r => r.RouteId is not null).Select(r => r.RouteId!.Value).Distinct().ToList();
+        var names = routeIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _db.Routes
+                .AsNoTracking()
+                .Where(r => routeIds.Contains(r.Id))
+                .ToDictionaryAsync(r => r.Id, r => r.Name, cancellationToken);
+
+        var caps = await GetVehicleCapacitiesAsync(cancellationToken);
+        var sourceByType = caps.ToDictionary(
+            c => c.VehicleType,
+            c => c.Source,
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var g in groups)
+        {
+            if (!map.TryGetValue(g.RouteKey, out var readiness)) continue;
+            var routeName = readiness.RouteId is Guid rid && names.TryGetValue(rid, out var n) ? n : null;
+            string? capacitySource = null;
+            if (!string.IsNullOrWhiteSpace(readiness.VehicleType?.ToString()) &&
+                sourceByType.TryGetValue(readiness.VehicleType!.ToString()!, out var src))
+            {
+                capacitySource = src;
+            }
+            else if (readiness.Capacity is > 0)
+            {
+                capacitySource = "DEFAULT_HINT";
+            }
+
+            g.Readiness = MapReadinessDto(
+                readiness,
+                routeName,
+                g.LastRequestAt,
+                g.Vehicle.Capacity,
+                capacitySource,
+                g.RouteKey);
+        }
+    }
+
+    private static RouteDemandReadinessDto MapReadinessDto(
+        RouteDemandReadinessResult r,
+        string? routeName,
+        DateTime lastUpdated,
+        int demandBandCapacity,
+        string? capacitySource,
+        string demandRouteKey)
+    {
+        var conflict = r.Capacity is int auth &&
+                       demandBandCapacity > 0 &&
+                       auth != demandBandCapacity;
+        var reason = r.ReadinessReason;
+        if (conflict)
+        {
+            reason +=
+                $" · تعارض سعة: تقدير الطلب يعرض {demandBandCapacity} بينما السعة التشغيلية المعتمدة {r.Capacity}" +
+                (string.IsNullOrWhiteSpace(capacitySource) ? "" : $" ({capacitySource})");
+        }
+
+        string? mappingCompatibility = null;
+        if (string.Equals(r.RouteLinkSource, "EXPLICIT", StringComparison.Ordinal) &&
+            !string.IsNullOrWhiteSpace(routeName))
+        {
+            mappingCompatibility = RouteDemandReadinessEnricher.IsExactBidirectionalMatch(demandRouteKey, routeName)
+                ? "EXACT_BIDIRECTIONAL"
+                : "MANUAL_OVERRIDE";
+            if (mappingCompatibility == "MANUAL_OVERRIDE")
+            {
+                reason += " · ربط يدوي صريح: لا يوجد تطابق آمن (مفتاح ثنائي الاتجاه) مع اسم المسار.";
+            }
+        }
+        else if (string.Equals(r.RouteLinkSource, "EXACT_KEY", StringComparison.Ordinal))
+        {
+            mappingCompatibility = "EXACT_BIDIRECTIONAL";
+        }
+
+        return new RouteDemandReadinessDto(
+            r.RouteId,
+            routeName,
+            r.VehicleType?.ToString(),
+            r.VehicleType switch
+            {
+                Domain.Enums.VehicleType.CarShuttle => "سيارة شاتلز",
+                Domain.Enums.VehicleType.MiniBus => "ميكروباص",
+                Domain.Enums.VehicleType.Bus => "أتوبيس",
+                _ => null
+            },
+            r.Capacity,
+            r.DemandCount,
+            r.UniquePassengers,
+            r.ConfirmedPassengers,
+            r.OccupancyPercent,
+            r.MinimumLaunchRiders,
+            r.TargetOccupancy,
+            r.RidersRequired,
+            r.RemainingToTarget,
+            r.PricingAvailable,
+            r.PricingLinked,
+            r.PricingSource,
+            r.OneWayPrice,
+            r.RoundTripPrice,
+            r.WeeklyPrice,
+            r.MonthlyPrice,
+            r.CommissionPercent,
+            r.CommissionType,
+            r.LaunchPeriodDays,
+            r.LaunchStartAt,
+            r.LaunchEndAt,
+            r.LaunchActive,
+            r.FinancialAtMinimumOneWayGross,
+            r.FinancialAtMinimumRoundTripGross,
+            r.FinancialAtMinimumPlatformCommission,
+            r.FinancialAtMinimumCaptainEarnings,
+            RouteDemandReadinessCalculator.ToApiStatus(r.LaunchStatus),
+            r.ReasonCode,
+            reason,
+            r.PricingRuleId,
+            lastUpdated,
+            demandBandCapacity > 0 ? demandBandCapacity : null,
+            capacitySource,
+            conflict,
+            r.RouteLinkSource,
+            mappingCompatibility);
     }
 
     private async Task<List<RouteDemandGroup>> BuildGroupsAsync(CancellationToken cancellationToken)
     {
         var passengers = await LoadPassengersAsync(cancellationToken);
-        var states = await _db.RouteDemandGroupStates
-            .Where(s => !s.IsDeleted)
-            .Include(s => s.AssignedDriver!)
-                .ThenInclude(d => d.User)
-            .Include(s => s.AssignedDriver!)
-                .ThenInclude(d => d.Vehicle)
-            .ToListAsync(cancellationToken);
 
-        var stateByKey = states.ToDictionary(s => s.RouteKey, StringComparer.Ordinal);
+        // Project only columns needed — avoid materializing full User.
+        // MappedRouteId may be absent until Phase 2.2 migration is applied.
+        var stateByKey = await LoadStateRowsAsync(cancellationToken);
 
         return passengers
             .GroupBy(p => p.RouteKey, StringComparer.Ordinal)
@@ -210,15 +613,15 @@ public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
                 var status = state?.Status ?? defaultStatus;
 
                 RouteDemandCaptainDto? captain = null;
-                if (state?.AssignedDriver is { } driver)
+                if (state?.DriverId is Guid driverId && !string.IsNullOrWhiteSpace(state.DriverPhone))
                 {
                     captain = new RouteDemandCaptainDto(
-                        driver.Id,
-                        driver.User.FullName ?? driver.User.Phone,
-                        driver.User.Phone,
-                        driver.Vehicle?.Type.ToString() ?? driver.VehicleKind ?? "—",
-                        driver.Vehicle?.Capacity ?? driver.Seats ?? 0,
-                        driver.VerificationStatus.ToString());
+                        driverId,
+                        state.DriverName ?? state.DriverPhone,
+                        state.DriverPhone,
+                        state.VehicleLabel ?? "—",
+                        state.Capacity ?? 0,
+                        state.Verification ?? "—");
                 }
 
                 return new RouteDemandGroup
@@ -237,6 +640,7 @@ public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
                     AssignedDriverName = captain?.Name,
                     Captain = captain,
                     Vehicle = vehicle,
+                    MappedRouteId = state?.MappedRouteId,
                     FirstRequestAt = samples.Min(s => s.CreatedAt),
                     LastRequestAt = samples.Max(s => s.CreatedAt),
                 };
@@ -245,6 +649,104 @@ public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
             .ThenByDescending(g => g.UniquePassengers)
             .ThenBy(g => g.FirstRequestAt)
             .ToList();
+    }
+
+    private async Task<Dictionary<string, DemandStateRow>> LoadStateRowsAsync(
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var rows = await _db.RouteDemandGroupStates
+                .AsNoTracking()
+                .Where(s => !s.IsDeleted)
+                .Select(s => new DemandStateRow(
+                    s.RouteKey,
+                    s.Status,
+                    s.AssignedDriverId,
+                    s.AssignedDriver != null ? (Guid?)s.AssignedDriver.Id : null,
+                    s.AssignedDriver != null
+                        ? (s.AssignedDriver.User.FullName ?? s.AssignedDriver.User.Phone)
+                        : null,
+                    s.AssignedDriver != null ? s.AssignedDriver.User.Phone : null,
+                    s.AssignedDriver != null
+                        ? (s.AssignedDriver.Vehicle != null
+                            ? s.AssignedDriver.Vehicle.Type.ToString()
+                            : s.AssignedDriver.VehicleKind)
+                        : null,
+                    s.AssignedDriver != null
+                        ? (s.AssignedDriver.Vehicle != null
+                            ? (int?)s.AssignedDriver.Vehicle.Capacity
+                            : s.AssignedDriver.Seats)
+                        : null,
+                    s.AssignedDriver != null
+                        ? s.AssignedDriver.VerificationStatus.ToString()
+                        : null,
+                    s.MappedRouteId))
+                .ToListAsync(cancellationToken);
+            return rows.ToDictionary(s => s.RouteKey, StringComparer.Ordinal);
+        }
+        catch (Exception ex) when (IsMissingMappedRouteColumn(ex))
+        {
+            var rows = await _db.RouteDemandGroupStates
+                .AsNoTracking()
+                .Where(s => !s.IsDeleted)
+                .Select(s => new
+                {
+                    s.RouteKey,
+                    s.Status,
+                    s.AssignedDriverId,
+                    DriverId = s.AssignedDriver != null ? (Guid?)s.AssignedDriver.Id : null,
+                    DriverName = s.AssignedDriver != null
+                        ? (s.AssignedDriver.User.FullName ?? s.AssignedDriver.User.Phone)
+                        : null,
+                    DriverPhone = s.AssignedDriver != null ? s.AssignedDriver.User.Phone : null,
+                    VehicleLabel = s.AssignedDriver != null
+                        ? (s.AssignedDriver.Vehicle != null
+                            ? s.AssignedDriver.Vehicle.Type.ToString()
+                            : s.AssignedDriver.VehicleKind)
+                        : null,
+                    Capacity = s.AssignedDriver != null
+                        ? (s.AssignedDriver.Vehicle != null
+                            ? (int?)s.AssignedDriver.Vehicle.Capacity
+                            : s.AssignedDriver.Seats)
+                        : null,
+                    Verification = s.AssignedDriver != null
+                        ? s.AssignedDriver.VerificationStatus.ToString()
+                        : null,
+                })
+                .ToListAsync(cancellationToken);
+
+            return rows.ToDictionary(
+                s => s.RouteKey,
+                s => new DemandStateRow(
+                    s.RouteKey,
+                    s.Status,
+                    s.AssignedDriverId,
+                    s.DriverId,
+                    s.DriverName,
+                    s.DriverPhone,
+                    s.VehicleLabel,
+                    s.Capacity,
+                    s.Verification,
+                    null),
+                StringComparer.Ordinal);
+        }
+    }
+
+    private static bool IsMissingMappedRouteColumn(Exception ex)
+    {
+        for (var e = ex; e != null; e = e.InnerException!)
+        {
+            var msg = e.Message ?? "";
+            if (msg.Contains("MappedRouteId", StringComparison.OrdinalIgnoreCase) &&
+                (msg.Contains("does not exist", StringComparison.OrdinalIgnoreCase) ||
+                 msg.Contains("42703", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task<List<PassengerRow>> LoadPassengersAsync(CancellationToken cancellationToken)
@@ -271,17 +773,17 @@ public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
 
         var appRows = await _db.RouteRequests
             .Where(r => !r.IsDeleted)
-            .Include(r => r.User)
             .OrderByDescending(r => r.CreatedAt)
             .Select(r => new
             {
                 r.Id,
-                r.User.Phone,
-                r.User.FullName,
+                Phone = r.User.Phone,
+                FullName = r.User.FullName,
                 r.FromAddress,
                 r.ToAddress,
                 r.Status,
                 r.Notes,
+                r.PreferredVehicleType,
                 r.CreatedAt,
             })
             .ToListAsync(cancellationToken);
@@ -301,6 +803,7 @@ public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
                 PreferredDepartureTime = notes.FromTime,
                 PreferredReturnTime = notes.ToTime,
                 Days = notes.UsageDays,
+                PreferredVehicleType = r.PreferredVehicleType,
                 LeadStatus = r.Status,
                 IsConfirmed = r.Status is "approved" or "converted",
                 CreatedAt = r.CreatedAt,
@@ -449,6 +952,27 @@ public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
             result = result.Where(g => g.FirstRequestAt <= query.CreatedTo.Value);
         }
 
+        if (!string.IsNullOrWhiteSpace(query.LaunchStatus))
+        {
+            var launch = query.LaunchStatus.Trim().ToUpperInvariant();
+            result = result.Where(g =>
+                g.Readiness is not null &&
+                string.Equals(g.Readiness.LaunchStatus, launch, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (query.PricingAvailable is bool pricingOk)
+        {
+            result = result.Where(g =>
+                g.Readiness is not null && g.Readiness.PricingAvailable == pricingOk);
+        }
+
+        if (query.ReadyToLaunch == true)
+        {
+            result = result.Where(g =>
+                g.Readiness is not null &&
+                g.Readiness.LaunchStatus == "READY");
+        }
+
         return result.ToList();
     }
 
@@ -480,7 +1004,8 @@ public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
             group.FirstRequestAt,
             group.LastRequestAt,
             group.AssignedDriverId,
-            group.AssignedDriverName);
+            group.AssignedDriverName,
+            group.Readiness);
 
     private static RouteDemandDetailsDto ToDetails(RouteDemandGroup group)
     {
@@ -523,7 +1048,8 @@ public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
                 .GroupBy(day => day)
                 .Select(g => new RouteDemandDayBucketDto(g.Key, g.Count()))
                 .OrderByDescending(x => x.PassengerCount)
-                .ToList());
+                .ToList(),
+            group.Readiness);
     }
 
     private static (string Title, string Reason, string NextAction) BuildLaunchRecommendation(RouteDemandGroup group)
@@ -642,9 +1168,23 @@ public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
         public string? AssignedDriverName { get; init; }
         public RouteDemandCaptainDto? Captain { get; init; }
         public required VehicleRecommendation Vehicle { get; init; }
+        public Guid? MappedRouteId { get; init; }
         public DateTime FirstRequestAt { get; init; }
         public DateTime LastRequestAt { get; init; }
+        public RouteDemandReadinessDto? Readiness { get; set; }
     }
+
+    private sealed record DemandStateRow(
+        string RouteKey,
+        string Status,
+        Guid? AssignedDriverId,
+        Guid? DriverId,
+        string? DriverName,
+        string? DriverPhone,
+        string? VehicleLabel,
+        int? Capacity,
+        string? Verification,
+        Guid? MappedRouteId);
 
     private sealed class PassengerRow
     {
@@ -658,6 +1198,7 @@ public sealed class RouteDemandAnalysisService : IRouteDemandAnalysisService
         public string? PreferredDepartureTime { get; init; }
         public string? PreferredReturnTime { get; init; }
         public string? Days { get; init; }
+        public string? PreferredVehicleType { get; init; }
         public string LeadStatus { get; init; } = string.Empty;
         public bool IsConfirmed { get; init; }
         public DateTime CreatedAt { get; init; }

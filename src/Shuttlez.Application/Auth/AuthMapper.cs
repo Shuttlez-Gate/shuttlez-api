@@ -30,7 +30,10 @@ public static class AuthMapper
     };
 
     public static OtpPurpose ParsePurpose(string purpose) =>
-        purpose.Equals("register", StringComparison.OrdinalIgnoreCase)
-            ? OtpPurpose.Register
-            : OtpPurpose.Login;
+        purpose.Trim().ToLowerInvariant() switch
+        {
+            "register" => OtpPurpose.Register,
+            "social-link" => OtpPurpose.SocialLink,
+            _ => OtpPurpose.Login
+        };
 }

@@ -36,6 +36,20 @@ public class AdminTripsController : AdminControllerBase
         CancellationToken cancellationToken) =>
         Send(new SaveTripCommand(id, request), cancellationToken, "تم تحديث الرحلة");
 
+    /// <summary>Manual Admin captain assignment (Phase 4C). Body: { driverId } only.</summary>
+    [HttpPut("{tripId:guid}/driver")]
+    public Task<ActionResult<ApiResponse<AdminTripDto>>> AssignDriver(
+        Guid tripId,
+        [FromBody] AssignTripDriverRequest request,
+        CancellationToken cancellationToken) =>
+        Send(new AssignTripDriverCommand(tripId, request.DriverId), cancellationToken, "تم تعيين الكابتن");
+
+    [HttpDelete("{tripId:guid}/driver")]
+    public Task<ActionResult<ApiResponse<AdminTripDto>>> UnassignDriver(
+        Guid tripId,
+        CancellationToken cancellationToken) =>
+        Send(new UnassignTripDriverCommand(tripId), cancellationToken, "تم إلغاء تعيين الكابتن");
+
     [HttpDelete("{id:guid}")]
     public Task<ActionResult<ApiResponse<bool>>> Delete(
         Guid id,

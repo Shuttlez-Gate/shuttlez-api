@@ -16,6 +16,9 @@ public class CustomerTripsController : ControllerBase
 
     public CustomerTripsController(IMediator mediator) => _mediator = mediator;
 
+    /// <summary>
+    /// Soft-deprecated (Phase 6A). Returns CUSTOMER_TRIPS_DEPRECATED — not a Ride product.
+    /// </summary>
     [HttpPost]
     public async Task<ActionResult<ApiResponse<CreateCustomerTripResponse>>> Create(
         [FromBody] CreateCustomerTripRequest request,

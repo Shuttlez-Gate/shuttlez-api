@@ -21,24 +21,38 @@ public static class DependencyInjection
     {
         services.Configure<JwtSettings>(configuration.GetSection(JwtSettings.SectionName));
         services.Configure<OtpSettings>(configuration.GetSection(OtpSettings.SectionName));
+        services.Configure<FirebaseAuthSettings>(configuration.GetSection(FirebaseAuthSettings.SectionName));
         services.Configure<RouteMatchingOptions>(configuration.GetSection(RouteMatchingOptions.SectionName));
         services.Configure<GoogleMapsSettings>(configuration.GetSection(GoogleMapsSettings.SectionName));
 
         services.AddSingleton<IRouteMatchingService, RouteMatchingService>();
         services.AddHttpClient<IGoogleDirectionsService, GoogleDirectionsService>();
 
+        var connectionString = configuration.GetConnectionString("DefaultConnection") ?? "";
+        connectionString = connectionString
+            .Replace("SSL Mode=VerifyFull", "SSL Mode=Require", StringComparison.OrdinalIgnoreCase)
+            .Replace("Channel Binding=Require", "Channel Binding=Disable", StringComparison.OrdinalIgnoreCase);
+
         services.AddDbContext<AppDbContext>(options =>
-            options.UseNpgsql(configuration.GetConnectionString("DefaultConnection")));
+            options.UseNpgsql(connectionString, npgsql =>
+            {
+                npgsql.EnableRetryOnFailure(3);
+                npgsql.CommandTimeout(30);
+            }));
 
         services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<IOtpService, OtpService>();
+        services.AddSingleton<IFirebaseTokenVerifier, FirebaseTokenVerifier>();
         services.AddSingleton<IDateTimeProvider, DateTimeProvider>();
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddScoped<IFileStorageService, LocalFileStorageService>();
         services.AddSingleton<IDriverRealtimeNotifier, NullDriverRealtimeNotifier>();
         services.AddSingleton<ISupportChatRealtimeNotifier, NullSupportChatRealtimeNotifier>();
+        services.AddScoped<IPushNotificationService, FirebasePushNotificationService>();
+        services.AddScoped<Shuttlez.Application.Notifications.TripPushNotifier>();
+        services.AddScoped<Shuttlez.Application.Notifications.RidePushNotifier>();
         services.AddMemoryCache();
 
         var jwt = configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()

@@ -95,3 +95,81 @@ public class AdminPackagesController : AdminControllerBase
         CancellationToken cancellationToken) =>
         Send(new DeletePackageCommand(id), cancellationToken, "تم الحذف");
 }
+
+[Route("api/v1/admin/commission-rules")]
+public class AdminCommissionController : AdminControllerBase
+{
+    public AdminCommissionController(IMediator mediator) : base(mediator) { }
+
+    [HttpGet]
+    public Task<ActionResult<ApiResponse<IReadOnlyList<AdminCommissionRuleDto>>>> List(
+        CancellationToken cancellationToken) =>
+        Send(new AdminCommissionListQuery(), cancellationToken);
+
+    [HttpPost]
+    public Task<ActionResult<ApiResponse<AdminCommissionRuleDto>>> Create(
+        [FromBody] SaveCommissionRuleRequest request,
+        CancellationToken cancellationToken) =>
+        Send(new SaveCommissionRuleCommand(null, request), cancellationToken, "تمت الإضافة");
+
+    [HttpPut("{id:guid}")]
+    public Task<ActionResult<ApiResponse<AdminCommissionRuleDto>>> Update(
+        Guid id,
+        [FromBody] SaveCommissionRuleRequest request,
+        CancellationToken cancellationToken) =>
+        Send(new SaveCommissionRuleCommand(id, request), cancellationToken, "تم التحديث");
+}
+
+[Route("api/v1/admin/pricing-rules")]
+public class AdminPricingController : AdminControllerBase
+{
+    public AdminPricingController(IMediator mediator) : base(mediator) { }
+
+    [HttpGet]
+    public Task<ActionResult<ApiResponse<IReadOnlyList<AdminPricingRuleDto>>>> List(
+        [FromQuery] Guid? routeId,
+        [FromQuery] string? vehicleType,
+        [FromQuery] bool? activeOnly,
+        CancellationToken cancellationToken) =>
+        Send(new AdminPricingListQuery(routeId, vehicleType, activeOnly), cancellationToken);
+
+    [HttpPost]
+    public Task<ActionResult<ApiResponse<AdminPricingRuleDto>>> Create(
+        [FromBody] SavePricingRuleRequest request,
+        CancellationToken cancellationToken) =>
+        Send(new SavePricingRuleCommand(null, request), cancellationToken, "تمت الإضافة");
+
+    [HttpPut("{id:guid}")]
+    public Task<ActionResult<ApiResponse<AdminPricingRuleDto>>> Update(
+        Guid id,
+        [FromBody] SavePricingRuleRequest request,
+        CancellationToken cancellationToken) =>
+        Send(new SavePricingRuleCommand(id, request), cancellationToken, "تم التحديث");
+
+    [HttpDelete("{id:guid}")]
+    public Task<ActionResult<ApiResponse<bool>>> Delete(
+        Guid id,
+        CancellationToken cancellationToken) =>
+        Send(new DeletePricingRuleCommand(id), cancellationToken, "تم الحذف");
+
+    [HttpPost("preview")]
+    public Task<ActionResult<ApiResponse<PricingPreviewDto>>> Preview(
+        [FromBody] PricingPreviewRequest request,
+        CancellationToken cancellationToken) =>
+        Send(new PricingPreviewQuery(request), cancellationToken);
+}
+
+[Route("api/v1/admin/earnings")]
+public class AdminEarningsController : AdminControllerBase
+{
+    public AdminEarningsController(IMediator mediator) : base(mediator) { }
+
+    [HttpGet("trips")]
+    public Task<ActionResult<ApiResponse<CaptainEarningsReportDto>>> TripEarnings(
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        [FromQuery] Guid? driverId,
+        [FromQuery] Guid? routeId,
+        CancellationToken cancellationToken) =>
+        Send(new CaptainEarningsReportQuery(from, to, driverId, routeId), cancellationToken);
+}

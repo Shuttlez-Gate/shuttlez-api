@@ -8,7 +8,6 @@ using Shuttlez.Application.Common;
 namespace Shuttlez.API.Controllers;
 
 [ApiController]
-[AllowAnonymous]
 [Route("api/v1/bookings")]
 public class BookingsController : ControllerBase
 {
@@ -17,6 +16,7 @@ public class BookingsController : ControllerBase
     public BookingsController(IMediator mediator) => _mediator = mediator;
 
     [HttpGet("preview")]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<BookingPreviewDto>>> GetPreview(
         [FromQuery] double sourceLatitude,
         [FromQuery] double sourceLongitude,
@@ -45,7 +45,9 @@ public class BookingsController : ControllerBase
         return Ok(ApiResponse<BookingPreviewDto>.Ok(preview));
     }
 
+    // Phase 5: JWT required; paymentMethod must be CASH (server authoritative).
     [HttpPost]
+    [Authorize]
     public async Task<ActionResult<ApiResponse<CreateBookingResponse>>> Create(
         [FromBody] CreateBookingRequest request,
         CancellationToken cancellationToken)

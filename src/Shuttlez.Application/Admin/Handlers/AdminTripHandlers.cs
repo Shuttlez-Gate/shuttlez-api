@@ -4,6 +4,8 @@ using Microsoft.Extensions.Caching.Memory;
 using Shuttlez.Application.Admin.DTOs;
 using Shuttlez.Application.Common;
 using Shuttlez.Application.Common.Interfaces;
+using Shuttlez.Application.Notifications;
+using Shuttlez.Application.Trips;
 using Shuttlez.Domain.Entities;
 using Shuttlez.Domain.Enums;
 
@@ -71,17 +73,20 @@ public class AdminTripHandlers :
     private readonly IDateTimeProvider _clock;
     private readonly IDriverRealtimeNotifier _realtime;
     private readonly IMemoryCache _cache;
+    private readonly TripPushNotifier _push;
 
     public AdminTripHandlers(
         IAppDbContext db,
         IDateTimeProvider clock,
         IDriverRealtimeNotifier realtime,
-        IMemoryCache cache)
+        IMemoryCache cache,
+        TripPushNotifier push)
     {
         _db = db;
         _clock = clock;
         _realtime = realtime;
         _cache = cache;
+        _push = push;
     }
 
     public async Task<PagedResult<AdminTripDto>> Handle(
@@ -148,6 +153,7 @@ public class AdminTripHandlers :
         }
 
         Trip trip;
+        Guid? previousDriverId = null;
         if (request.Id is null)
         {
             trip = new Trip();
@@ -158,6 +164,9 @@ public class AdminTripHandlers :
             trip = await _db.Trips
                 .FirstOrDefaultAsync(t => t.Id == request.Id && !t.IsDeleted, cancellationToken)
                 ?? throw new NotFoundException("الرحلة غير موجودة");
+            previousDriverId = trip.DriverId;
+            // PricePerSeat is a launch-time snapshot — never rewrite after create.
+            TripPriceSnapshot.EnsureImmutableOnUpdate(trip.PricePerSeat, body.PricePerSeat);
             trip.UpdatedAt = _clock.UtcNow;
             _db.Update(trip);
         }
@@ -165,7 +174,10 @@ public class AdminTripHandlers :
         trip.RouteId = body.RouteId;
         trip.DriverId = body.DriverId == Guid.Empty ? null : body.DriverId;
         trip.ScheduledAt = ToUtc(body.ScheduledAt);
-        trip.PricePerSeat = body.PricePerSeat;
+        if (request.Id is null)
+        {
+            trip.PricePerSeat = body.PricePerSeat;
+        }
         trip.AvailableSeats = body.AvailableSeats;
         trip.ReferenceCode = string.IsNullOrWhiteSpace(body.ReferenceCode)
             ? trip.ReferenceCode ?? BuildReferenceCode()
@@ -186,7 +198,16 @@ public class AdminTripHandlers :
 
         await _db.SaveChangesAsync(cancellationToken);
 
+        await NotifyDriverTripsChangedAsync(previousDriverId, cancellationToken);
         await NotifyDriverTripsChangedAsync(trip.DriverId, cancellationToken);
+
+        await NotifyAssignmentPushAsync(
+            previousDriverId,
+            trip.DriverId,
+            trip.Id,
+            trip.RouteId,
+            trip.ScheduledAt,
+            cancellationToken);
 
         return await _db.Trips
             .Where(t => t.Id == trip.Id)
@@ -212,12 +233,40 @@ public class AdminTripHandlers :
         }
 
         var driverId = trip.DriverId;
+        var tripId = trip.Id;
+        var routeId = trip.RouteId;
+        var scheduledAt = trip.ScheduledAt;
         trip.IsDeleted = true;
         trip.Status = TripStatus.Cancelled;
         trip.UpdatedAt = _clock.UtcNow;
         _db.Update(trip);
         await _db.SaveChangesAsync(cancellationToken);
         await NotifyDriverTripsChangedAsync(driverId, cancellationToken);
+
+        var notifyUserIds = new HashSet<Guid>();
+        if (driverId is not null)
+        {
+            var captainUserId = await _db.Drivers
+                .AsNoTracking()
+                .Where(d => d.Id == driverId && !d.IsDeleted)
+                .Select(d => (Guid?)d.UserId)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (captainUserId is not null) notifyUserIds.Add(captainUserId.Value);
+        }
+
+        var riders = await _db.Bookings
+            .AsNoTracking()
+            .Where(b => b.TripId == tripId && !b.IsDeleted && b.Status == BookingStatus.Confirmed)
+            .Select(b => b.UserId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        foreach (var r in riders) notifyUserIds.Add(r);
+
+        foreach (var uid in notifyUserIds)
+        {
+            await _push.NotifyTripCancelledAsync(uid, tripId, routeId, scheduledAt, cancellationToken);
+        }
+
         return true;
     }
 
@@ -354,15 +403,29 @@ public class AdminTripHandlers :
 
         if (wasActive && !willBeActive)
         {
-            booking.Trip.AvailableSeats += booking.SeatCount;
+            await _db.TryIncrementTripSeatsAsync(booking.TripId, booking.SeatCount, cancellationToken);
         }
         else if (!wasActive && willBeActive)
         {
-            if (booking.Trip.AvailableSeats < booking.SeatCount)
+            if (!TripBookability.IsBookableStatus(booking.Trip.Status) || booking.Trip.IsDeleted)
             {
-                throw new AppException("لا توجد مقاعد كافية لإعادة تنشيط الحجز");
+                throw new AppException(
+                    "الرحلة غير متاحة لإعادة تنشيط الحجز",
+                    400,
+                    ErrorCodes.TripNotBookable);
             }
-            booking.Trip.AvailableSeats -= booking.SeatCount;
+
+            var reserved = await _db.TryDecrementTripSeatsAsync(
+                booking.TripId,
+                booking.SeatCount,
+                cancellationToken);
+            if (reserved == 0)
+            {
+                throw new AppException(
+                    "لا توجد مقاعد كافية لإعادة تنشيط الحجز",
+                    409,
+                    ErrorCodes.SeatUnavailable);
+            }
         }
 
         booking.Status = newStatus;
@@ -463,10 +526,61 @@ public class AdminTripHandlers :
     {
         if (driverId is null || driverId == Guid.Empty) return;
 
-        var exists = await _db.Drivers.AnyAsync(d => d.Id == driverId && !d.IsDeleted, ct);
-        if (!exists)
+        var driver = await _db.Drivers
+            .AsNoTracking()
+            .Where(d => d.Id == driverId && !d.IsDeleted)
+            .Select(d => new { d.IsActive, d.VerificationStatus })
+            .FirstOrDefaultAsync(ct)
+            ?? throw new NotFoundException("الكابتن غير موجود", ErrorCodes.DriverNotFound);
+
+        if (!driver.IsActive)
+            throw new AppException("الكابتن غير نشط", 400, ErrorCodes.DriverInactive);
+
+        if (driver.VerificationStatus != DriverVerificationStatus.Approved)
+            throw new AppException("الكابتن غير مؤهل للتعيين", 400, ErrorCodes.DriverNotEligible);
+    }
+
+    private async Task NotifyAssignmentPushAsync(
+        Guid? previousDriverId,
+        Guid? newDriverId,
+        Guid tripId,
+        Guid routeId,
+        DateTime scheduledAt,
+        CancellationToken ct)
+    {
+        if (previousDriverId == newDriverId) return;
+
+        string? routeName = await _db.Routes
+            .AsNoTracking()
+            .Where(r => r.Id == routeId)
+            .Select(r => r.Name)
+            .FirstOrDefaultAsync(ct);
+
+        if (previousDriverId is not null)
         {
-            throw new NotFoundException("الكابتن غير موجود");
+            var prevUser = await _db.Drivers
+                .AsNoTracking()
+                .Where(d => d.Id == previousDriverId && !d.IsDeleted)
+                .Select(d => (Guid?)d.UserId)
+                .FirstOrDefaultAsync(ct);
+            if (prevUser is not null)
+            {
+                await _push.NotifyCaptainUnassignedAsync(prevUser.Value, tripId, routeId, scheduledAt, ct);
+            }
+        }
+
+        if (newDriverId is not null)
+        {
+            var nextUser = await _db.Drivers
+                .AsNoTracking()
+                .Where(d => d.Id == newDriverId && !d.IsDeleted)
+                .Select(d => (Guid?)d.UserId)
+                .FirstOrDefaultAsync(ct);
+            if (nextUser is not null)
+            {
+                await _push.NotifyCaptainAssignedAsync(
+                    nextUser.Value, tripId, routeId, scheduledAt, routeName, ct);
+            }
         }
     }
 
@@ -555,5 +669,9 @@ public class AdminTripHandlers :
                 : b.Invoice.Status == PaymentStatus.Paid ? "paid"
                     : b.Invoice.Status == PaymentStatus.Failed ? "failed"
                     : b.Invoice.Status == PaymentStatus.Refunded ? "refunded" : "pending",
-            b.CreatedAt);
+            b.CreatedAt,
+            b.PricePerSeat,
+            b.CommissionRate,
+            b.CommissionAmount,
+            b.CaptainEarnings);
 }

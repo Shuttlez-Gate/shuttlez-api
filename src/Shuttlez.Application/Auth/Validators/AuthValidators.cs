@@ -12,8 +12,8 @@ public class SendOtpRequestValidator : AbstractValidator<SendOtpRequest>
             .Matches(@"^\+?20\d{10}$")
             .WithMessage("رقم الهاتف غير صالح. استخدم صيغة مصرية مثل +2010xxxxxxxx");
         RuleFor(x => x.Purpose)
-            .Must(p => p is "login" or "register")
-            .WithMessage("الغرض يجب أن يكون login أو register");
+            .Must(p => p is "login" or "register" or "social-link")
+            .WithMessage("الغرض يجب أن يكون login أو register أو social-link");
     }
 }
 
@@ -40,5 +40,51 @@ public class RegisterRequestValidator : AbstractValidator<RegisterRequest>
         RuleFor(x => x.Gender)
             .Must(g => g is "male" or "female" or "ذكر" or "أنثى")
             .WithMessage("النوع غير صالح");
+    }
+}
+
+public class SocialLoginRequestValidator : AbstractValidator<SocialLoginRequest>
+{
+    public SocialLoginRequestValidator()
+    {
+        RuleFor(x => x.Provider)
+            .Must(p => p is "google" or "facebook")
+            .WithMessage("مزود تسجيل الدخول يجب أن يكون google أو facebook");
+        RuleFor(x => x.FirebaseIdToken).NotEmpty();
+    }
+}
+
+public class SocialSendOtpRequestValidator : AbstractValidator<SocialSendOtpRequest>
+{
+    public SocialSendOtpRequestValidator()
+    {
+        RuleFor(x => x.Provider)
+            .Must(p => p is "google" or "facebook")
+            .WithMessage("مزود تسجيل الدخول يجب أن يكون google أو facebook");
+        RuleFor(x => x.FirebaseIdToken).NotEmpty();
+        RuleFor(x => x.Phone)
+            .NotEmpty()
+            .Matches(@"^\+?20\d{10}$")
+            .WithMessage("رقم الهاتف غير صالح. استخدم صيغة مصرية مثل +2010xxxxxxxx");
+    }
+}
+
+public class SocialCompleteRequestValidator : AbstractValidator<SocialCompleteRequest>
+{
+    public SocialCompleteRequestValidator()
+    {
+        RuleFor(x => x.Provider)
+            .Must(p => p is "google" or "facebook")
+            .WithMessage("مزود تسجيل الدخول يجب أن يكون google أو facebook");
+        RuleFor(x => x.FirebaseIdToken).NotEmpty();
+        RuleFor(x => x.Phone)
+            .NotEmpty()
+            .Matches(@"^\+?20\d{10}$")
+            .WithMessage("رقم الهاتف غير صالح. استخدم صيغة مصرية مثل +2010xxxxxxxx");
+        RuleFor(x => x.Code)
+            .NotEmpty()
+            .Length(4)
+            .Matches(@"^\d{4}$")
+            .WithMessage("رمز التحقق يجب أن يكون 4 أرقام");
     }
 }

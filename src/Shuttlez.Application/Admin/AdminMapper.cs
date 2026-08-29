@@ -144,7 +144,7 @@ public static class AdminMapper
         new(item.Id, item.Question, item.Answer, item.Order, item.IsActive);
 
     public static AdminLegalDto ToDto(this LegalDocument doc) =>
-        new(doc.Id, doc.Slug, doc.Title, doc.Content, doc.IsActive, doc.UpdatedAt);
+        new(doc.Id, doc.Slug, doc.Title, doc.Content, doc.TitleEn, doc.ContentEn, doc.IsActive, doc.UpdatedAt);
 
     public static AdminPackageDto ToDto(this SubscriptionPackage package) =>
         new(package.Id, package.Name, package.Description, package.Price,

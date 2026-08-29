@@ -3,5 +3,6 @@
 public enum OtpPurpose
 {
     Login = 1,
-    Register = 2
+    Register = 2,
+    SocialLink = 3
 }

@@ -47,3 +47,21 @@ public record UserProfileDto(
     decimal RatingAverage,
     int RatingCount,
     string UserType);
+
+public record SocialLoginRequest(string Provider, string FirebaseIdToken);
+
+public record SocialSendOtpRequest(string Provider, string FirebaseIdToken, string Phone);
+
+public record SocialCompleteRequest(
+    string Provider,
+    string FirebaseIdToken,
+    string Phone,
+    string Code);
+
+public record SocialLoginResultDto(
+    bool RequiresPhoneVerification,
+    string Provider,
+    AuthResponseDto? Auth,
+    string? DisplayName = null,
+    string? Email = null,
+    string? PhotoUrl = null);

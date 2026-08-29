@@ -63,6 +63,8 @@ public static class DbSeeder
         await SeedFaqAsync(db);
         await SeedLegalDocumentsAsync(db);
         await SeedSubscriptionPackagesAsync(db);
+        await SeedCommissionRulesAsync(db);
+        await SeedPricingRulesAsync(db);
         await SyncCaptainLeadsToDriversAsync(db);
 
         if (!await db.Routes.AnyAsync())
@@ -394,6 +396,73 @@ public static class DbSeeder
         await db.SaveChangesAsync();
     }
 
+    private static async Task SeedCommissionRulesAsync(AppDbContext db)
+    {
+        if (await db.CommissionRulesSet.AnyAsync())
+            return;
+
+        // Launch default: platform keeps 0% → captain receives 100%.
+        db.CommissionRulesSet.Add(new CommissionRule
+        {
+            Name = "Launch — Captain 100%",
+            PlatformCommissionPercent = 0m,
+            EffectiveFrom = DateTime.UtcNow.Date,
+            EffectiveTo = null,
+            IsActive = true,
+        });
+
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedPricingRulesAsync(AppDbContext db)
+    {
+        if (await db.PricingRulesSet.AnyAsync())
+            return;
+
+        var now = DateTime.UtcNow;
+        // Vehicle-level defaults (RouteId null). Catalog only — not fake bookings.
+        db.PricingRulesSet.AddRange(
+            new PricingRule
+            {
+                Name = "CarShuttle — Cairo default",
+                RouteId = null,
+                VehicleType = VehicleType.CarShuttle,
+                OneWayPrice = 120m,
+                RoundTripPrice = 240m,
+                WeeklyPrice = 1100m,
+                MonthlyPrice = 4500m,
+                LaunchCommissionPercent = 0m,
+                PermanentCommissionPercent = 10m,
+                LaunchPeriodDays = 90,
+                LaunchStartAt = now.Date,
+                MinimumLaunchRiders = 3,
+                TargetOccupancy = 3,
+                EffectiveFrom = now.Date,
+                IsActive = true,
+            },
+            new PricingRule
+            {
+                Name = "MiniBus — Cairo default",
+                RouteId = null,
+                VehicleType = VehicleType.MiniBus,
+                OneWayPrice = 75m,
+                RoundTripPrice = 150m,
+                WeeklyPrice = 690m,
+                MonthlyPrice = 2850m,
+                LaunchCommissionPercent = 0m,
+                PermanentCommissionPercent = 10m,
+                LaunchPeriodDays = 90,
+                LaunchStartAt = now.Date,
+                MinimumLaunchRiders = 8,
+                TargetOccupancy = 10,
+                EffectiveFrom = now.Date,
+                IsActive = true,
+            });
+
+        // Bus: no invented production price — configure via Admin when ready.
+        await db.SaveChangesAsync();
+    }
+
     private static async Task SeedSampleNotificationsAsync(AppDbContext db)
     {
         if (await db.NotificationsSet.AnyAsync())
@@ -503,14 +572,14 @@ public static class DbSeeder
 
     private static async Task SeedLegalDocumentsAsync(AppDbContext db)
     {
-        var documents = new Dictionary<string, (string Title, string Content)>
+        var documents = new Dictionary<string, (string Title, string Content, string TitleEn, string ContentEn)>
         {
-            ["terms"] = ("الشروط و الاحكام", ContentSeedData.TermsJson),
-            ["privacy"] = ("سياسة الخصوصية", ContentSeedData.PrivacyJson),
-            ["about"] = ("عن التطبيق", ContentSeedData.AboutJson),
+            ["terms"] = ("الشروط و الاحكام", ContentSeedData.TermsJson, "Terms & conditions", ContentSeedData.TermsJsonEn),
+            ["privacy"] = ("سياسة الخصوصية", ContentSeedData.PrivacyJson, "Privacy policy", ContentSeedData.PrivacyJsonEn),
+            ["about"] = ("عن التطبيق", ContentSeedData.AboutJson, "About the app", ContentSeedData.AboutJsonEn),
         };
 
-        foreach (var (slug, (title, content)) in documents)
+        foreach (var (slug, (title, content, titleEn, contentEn)) in documents)
         {
             var existing = await db.LegalDocuments
                 .FirstOrDefaultAsync(d => d.Slug == slug);
@@ -522,6 +591,8 @@ public static class DbSeeder
                     Slug = slug,
                     Title = title,
                     Content = content,
+                    TitleEn = titleEn,
+                    ContentEn = contentEn,
                     IsActive = true
                 });
             }
@@ -529,6 +600,8 @@ public static class DbSeeder
             {
                 existing.Title = title;
                 existing.Content = content;
+                existing.TitleEn = titleEn;
+                existing.ContentEn = contentEn;
                 existing.IsActive = true;
             }
         }

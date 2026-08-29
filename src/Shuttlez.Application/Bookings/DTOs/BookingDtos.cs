@@ -21,7 +21,9 @@ public record ShuttleOfferDto(
     string SeatsLabel,
     int SeatsArgb,
     bool SeatsStrikethrough,
-    bool CardDimmed);
+    bool CardDimmed,
+    decimal PricePerSeat = 0,
+    int AvailableSeats = 0);
 
 public record BookingPreviewDto(
     string SourceAddress,
@@ -40,4 +42,7 @@ public record CreateBookingResponse(
     string ReferenceCode,
     decimal TotalAmount,
     string Status,
-    string Message);
+    string Message,
+    decimal PricePerSeat = 0,
+    int SeatCount = 0,
+    string PaymentMethod = "cash");

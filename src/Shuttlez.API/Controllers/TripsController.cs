@@ -1,6 +1,7 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Shuttlez.Application.Bookings.Queries;
 using Shuttlez.Application.Common;
 using Shuttlez.Application.Trips.DTOs;
 using Shuttlez.Application.Trips.Queries;
@@ -40,5 +41,14 @@ public class TripsController : ControllerBase
     {
         var invoice = await _mediator.Send(new GetTripInvoiceQuery(id), cancellationToken);
         return Ok(ApiResponse<TripInvoiceDto>.Ok(invoice));
+    }
+
+    [HttpPost("{id:guid}/cancel")]
+    public async Task<ActionResult<ApiResponse<bool>>> Cancel(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var cancelled = await _mediator.Send(new CancelTripBookingCommand(id), cancellationToken);
+        return Ok(ApiResponse<bool>.Ok(cancelled, "تم إلغاء الرحلة بنجاح"));
     }
 }

@@ -301,7 +301,11 @@ public record AdminBookingDto(
     string PaymentMethod,
     string? ReferenceCode,
     string? InvoiceStatus,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    decimal PricePerSeat = 0,
+    decimal CommissionRate = 0,
+    decimal CommissionAmount = 0,
+    decimal CaptainEarnings = 0);
 
 public record UpdateBookingStatusRequest(string Status);
 
@@ -362,10 +366,18 @@ public record AdminLegalDto(
     string Slug,
     string Title,
     string Content,
+    string? TitleEn,
+    string? ContentEn,
     bool IsActive,
     DateTime? UpdatedAt);
 
-public record SaveLegalRequest(string Slug, string Title, string Content, bool IsActive = true);
+public record SaveLegalRequest(
+    string Slug,
+    string Title,
+    string Content,
+    string? TitleEn,
+    string? ContentEn,
+    bool IsActive = true);
 
 public record AdminPackageDto(
     Guid Id,
